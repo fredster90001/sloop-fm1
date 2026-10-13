@@ -8,6 +8,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -66,6 +71,15 @@ jobs:
             build/felucca.bin
           if-no-files-found: error
 
+      # Your own installer page (the public one installs only the original SLOOP): the same installer, with this package.
+      - name: Make the installer page
+        run: python3 web/make_site.py build/felucca.fwsc 2.6+8S build/site
+
+      - name: Upload the installer page
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/site
+
       # The hardware-free tests. They do not stop the package from being kept (it is saved above).
       - name: Tests
         continue-on-error: true
@@ -83,3 +97,15 @@ jobs:
           name: test-log
           path: test-log.txt
           if-no-files-found: ignore
+
+  # Puts the installer page on the web at https://<your-name>.github.io/sloop-fm1/ (needs Settings > Pages > Source: GitHub Actions)
+  pages:
+    needs: build
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish
+        id: deployment
+        uses: actions/deploy-pages@v4
