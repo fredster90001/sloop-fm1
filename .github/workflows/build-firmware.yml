@@ -1,1 +1,64 @@
+name: Build firmware
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Python packages
+        run: pip install Pillow
+
+      - name: JieLi toolchain
+        run: sh tools/get_toolchain.sh
+
+      - name: JieLi SDK (three files of it are used)
+        run: |
+          git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
+            https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$HOME/fw-AC79_AIoT_SDK"
+
+      - name: Build
+        run: sh build.sh
+
+      - name: Memory report
+        run: |
+          ls -l build/felucca.bin build/felucca.fwsc build/loader/ota.bin
+          ls build/*.map 2>/dev/null && grep -E "POOL|XIP|RAM|NOINIT" build/*.map | head -20 || true
+
+      - name: Keep the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: sloop-firmware
+          path: |
+            build/felucca.fwsc
+            build/felucca.bin
+          if-no-files-found: error
+
+      # The hardware-free tests. They do not stop the package from being kept (it is saved above).
+      - name: Tests
+        continue-on-error: true
+        env:
+          SOAK_MIN: "1"
+          STRESS_FRAMES: "5000"
+          STRESS_ASAN_FRAMES: "3000"
+          SKIP_CPU_VALGRIND: "1"
+        run: sh tests/run_tests.sh 2>&1 | tee test-log.txt
+
+      - name: Keep the test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: test-log.txt
+          if-no-files-found: ignore
 
