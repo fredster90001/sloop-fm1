@@ -13,8 +13,8 @@ static const char *const VIS_NAME[VIS_N] = {"OSCILLOSCOPE", "SPECTRUM", "SPECTRO
                                             "CIRCLE", "TAPE", "LCD", "BOUNCE", "ORBIT", "WIRES", "SLOOP"};
 /* vis_on, vis_shown_last, vis_name_t: ui_draw.c; vis_style: panel.c (kept with the settings) */
 #define VIS_FFT 512u
-#define VIS_SG_W 48u                                /* spectrogram: 48 columns of 5 px, 72 rows of 3 px */
-#define VIS_SG_H 72u
+#define VIS_SG_W 48u                                /* spectrogram: 48 columns of 5 px, 30 rows of 7 px (SLOOP 2.7: was 72 of 3, to free pool RAM) */
+#define VIS_SG_H 30u
 static int16_t vis_re[VIS_FFT] __attribute__((section(".pool"))), vis_im[VIS_FFT] __attribute__((section(".pool")));
 static int16_t vis_l[VIS_FFT], vis_r[VIS_FFT];      /* this frame's scope snapshot */
 static uint8_t vis_sg[VIS_SG_H][VIS_SG_W] __attribute__((section(".pool")));
@@ -384,12 +384,12 @@ static void vis_spectrogram(void)
 {
     uint32_t r, c;
     for (r = 0; r < VIS_SG_H; r++) {
-        int32_t y = 24 + (int32_t)r * 3;
-        if (y + 3 <= -cv_oy || y >= (int32_t)cv_h - cv_oy)
+        int32_t y = 24 + (int32_t)r * 7;
+        if (y + 7 <= -cv_oy || y >= (int32_t)cv_h - cv_oy)
             continue;
         for (c = 0; c < VIS_SG_W; c++)
             if (vis_sg[r][c] > 8u)
-                cv_rect((int32_t)c * 5, y, 5, 3, vis_heat(vis_sg[r][c]));
+                cv_rect((int32_t)c * 5, y, 5, 7, vis_heat(vis_sg[r][c]));
     }
     cv_text(2, 2, &FONT_S, "40", C_DIM);
     cv_text(30, 2, &FONT_S, "200", C_DIM);
