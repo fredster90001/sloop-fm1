@@ -1,3 +1,6 @@
+# Builds the SLOOP firmware package (.fwsc) on GitHub's own computers: nothing to install at home.
+# Runs by itself when files change, or by hand: Actions tab > "Build firmware" > Run workflow.
+# The finished package is at the bottom of the run's page, under "Artifacts" (sloop-firmware).
 name: Build firmware
 
 on:
@@ -24,8 +27,27 @@ jobs:
 
       - name: JieLi SDK (three files of it are used)
         run: |
-          git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
-            https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$HOME/fw-AC79_AIoT_SDK"
+          if [ -f sdk-files/cpu/wl82/tools/uboot.boot ]; then
+            echo "Using the three SDK files kept in this repository (sdk-files/)"
+            echo "AC79_SDK=$GITHUB_WORKSPACE/sdk-files" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          ok=""
+          for i in 1 2 3; do
+            rm -rf "$HOME/fw-AC79_AIoT_SDK"
+            if git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
+                 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git "$HOME/fw-AC79_AIoT_SDK"; then
+              ok=1
+              break
+            fi
+            echo "download attempt $i failed"
+            sleep 15
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::Could not download the JieLi SDK from gitee.com (3 tries). Fallback: keep the three SDK files in this repository, in sdk-files/cpu/wl82/tools/"
+            exit 1
+          fi
+          echo "AC79_SDK=$HOME/fw-AC79_AIoT_SDK" >> "$GITHUB_ENV"
 
       - name: Build
         run: sh build.sh
@@ -61,4 +83,3 @@ jobs:
           name: test-log
           path: test-log.txt
           if-no-files-found: ignore
-
