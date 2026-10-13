@@ -8,6 +8,13 @@ SLOOP is free and open source (GPL-3.0), based on [Felucca](https://github.com/h
 
 > **Status:** 2.6, running on the FM-1. Still a beta: install at your own risk, and please report what you find (GitHub issues).
 
+> **2.6+8S: eight scenes.** This build has sections **A–H** instead of A–D, for longer songs. What changed:
+> - **Keys:** in the SAVE layer, **key 15** switches the keys 1–8 between A–D and **E–H** (play on 1–4, save on 5–8; the tile on key 15 shows which bank). Quick chains and the song order use all eight; the SONG screen's KNOB 2 reaches H; SAVE → PROJECT has 8 slots (5–8 = E–H).
+> - **E–H are kept in flash and play from there**, so they use almost no extra memory. Saved while playing, a scene E–H waits in memory and is written to flash as soon as you stop and nothing sounds (a few seconds). **If the power or a crash takes it before that, it is lost** (a live A–D save survives a reset; a waiting E–H one does not). One waiting scene at a time: a second live save of a different E–H scene while playing shows *STOP TO SAVE*.
+> - **What was cut: the USR4 sample slot** (its flash holds E–H), so **USR4 and the USR3+4 big drum kit are gone** (they stay in the lists, empty and silent). USR1–USR3 and every built-in sound, kit and preset are as before.
+> - **The web editor** is the 2.6 one: it still shows four projects and USR4, and cannot see E–H or send to USR4; a backup does not contain E–H. Everything on the FM-1 itself works.
+> - Going back to stock SLOOP 2.6 or the official firmware is done the same way as ever (see Install); the E–H data just stays in flash, unused there.
+
 > **Looking for one control?** [GUIDE.md](GUIDE.md) is the complete guide: every button, key combination, layer, page and editor page, with a [one-page cheat sheet](GUIDE.md#26-cheat-sheet).
 
 ### New in 2.6
@@ -456,15 +463,15 @@ Four slots of about 7.4 s each hold your own sounds (USR4 from 2.4), played by a
 
 ## Song mode
 
-A song is up to 16 steps of 4 sections, **A–D** (each holds the four tracks: sounds, patterns, kit). Make it live, by playing:
+A song is up to 16 steps of 8 sections, **A–H** (each holds the four tracks: sounds, patterns, kit). **A–D** are as ever; **E–H** are the 8-scene mod (version *2.6+8S*, below). Make it live, by playing:
 
 1. Make a loop (the verse). Hold **SAVE** and press the **5th white key** (*save A*). Change the loop (the chorus) and save it into **B** with the 6th key, a bridge into **C**, an end into **D**. Saving over a used section asks for the key again within 3 s.
-2. **Play the sections live:** hold SAVE and press white key **1–4**. Playing, the section starts on the next bar, every track from its first step, always in time; stopped, it becomes the loop at once.
+2. **Play the sections live:** hold SAVE and press white key **1–4**. **Key 15** turns the keys 1–8 from sections A–D to **E–H** and back (its tile shows *A-D* or *E-H*; *save E*, *save F*… on the keys 5–8). Playing, the section starts on the next bar, every track from its first step, always in time; stopped, it becomes the loop at once.
    **Quick chain:** keep SAVE held and tap more section keys — *A B B C*, any order, repeats allowed, up to 8 — then let go: the first plays on the next bar as usual, then each next one after the previous has played its **pattern length** (the longest track's: a 32-step 1/16 track is 2 bars), round and round. The title line reads *chain A B B C*, the section playing is lit, the next one framed. A single section tap, STOP, or PLAY in song mode ends the chain. SONG REC records what the chain plays.
 3. **Record the song as you play it:** SAVE + key **14** (*rec*): from the next bar, every section you play and how many bars it plays are written into the song. Press it again, or STOP, to end: *SONG PARTS 5*. It is saved by itself once you stop.
 4. **Play it back:** SAVE + key **13** switches *loop* / *song*; in song mode **PLAY** plays the whole song and stops at the end (your loop is back afterwards).
 
-The **SONG screen** (SAVE tapped on TRACKS, or SAVE + key 16) shows the chain and edits it by hand: **KNOB 1** the step, **KNOB 2** its section, **KNOB 3** its bars, **KNOB 4** the number of steps; **REC** stores the loop into the step's section; **SAVE** (tap) saves the chain; **OCT−** loop / song; **OCT+ twice** loads a section. The four sections are the four project slots.
+The **SONG screen** (SAVE tapped on TRACKS, or SAVE + key 16) shows the chain and edits it by hand: **KNOB 1** the step, **KNOB 2** its section, **KNOB 3** its bars, **KNOB 4** the number of steps; **REC** stores the loop into the step's section; **SAVE** (tap) saves the chain; **OCT−** loop / song; **OCT+ twice** loads a section. KNOB 2 reaches section H. A–D are the first four project slots; **E–H are project slots 5–8** (SAVE → PROJECT: SLOT 1–8).
 
 ## The web editor
 

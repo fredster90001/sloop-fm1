@@ -20,8 +20,12 @@
  * 0x97000..0x9EFFF, user sample slots 0xA0000..0xDBFFF (eng_sample.c), user preset banks 0xDC000..0xDFFFF
  * (upreset.c); the working project (autosave, project.c): copy A 0x9F000, copy B 0xFE000 (the two sectors
  * left: A/B needs no two neighbours); the FM6 patch bank (fm6_bank.c, SLOOP 2.4): 0xE5000 / 0xE6000, the first
- * two sectors of the free 0xE5000..0xFBFFF after the update staging (FL_FM6, fm1_flash.h) */
-enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_AUTOSAVE = OBJ_UPRESET0 + 2, OBJ_FM6BANK, OBJ_COUNT };
+ * two sectors of the free 0xE5000..0xFBFFF after the update staging (FL_FM6, fm1_flash.h).
+ * SLOOP 2.7: scenes E..H (OBJ_PROJECT4..7) take the first eight sectors of the old USR4 sample slot, 0xE7000..0xEEFFF;
+ * the rest of it (0xEF000..0xFAFFF) stays free. USR4 is gone (eng_sample.c SMP_USER_ACTIVE). */
+enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_AUTOSAVE = OBJ_UPRESET0 + 2, OBJ_FM6BANK,
+       OBJ_PROJECT4, OBJ_COUNT = OBJ_PROJECT4 + 4 };   /* (new ids last: the type of every older object is unchanged) */
+#define ST_SCENE_BASE 0xE7000u
 
 typedef struct {
     uint32_t magic;
@@ -57,6 +61,8 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
         return copy ? 0xFE000u : 0x9F000u;
     if (obj == OBJ_FM6BANK)
         return 0xE5000u + copy * ST_SECTOR;
+    if (obj >= OBJ_PROJECT4)
+        return ST_SCENE_BASE + (obj - OBJ_PROJECT4) * 2u * ST_SECTOR + copy * ST_SECTOR;
     if (obj >= OBJ_UPRESET0 && obj < OBJ_AUTOSAVE)
         return 0xDC000u + (obj - OBJ_UPRESET0) * 2u * ST_SECTOR + copy * ST_SECTOR;
     return 0x97000u + (obj - OBJ_PROJECT0) * 2u * ST_SECTOR + copy * ST_SECTOR;

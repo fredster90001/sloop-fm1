@@ -446,7 +446,7 @@ static const uint8_t *ed_bk_obj(uint32_t id, uint32_t *len)   /* 0 = no such obj
             *len = sizeof ed_bk_ml;
         return ed_bk_ml;
     }
-    if (id >= 32u && id < 32u + SMP_USER_SLOTS) {
+    if (id >= 32u && id < 32u + SMP_USER_ACTIVE) {
         const smp_user_hdr_t *h = (const smp_user_hdr_t *)smp_user_xip(id - 32u);
         if (h->magic == SMP_USER_MAGIC && h->version == 1u && h->nz && h->nz <= 16u &&
             h->data_len <= SMP_USER_SIZE - SMP_USER_DATA)
@@ -455,8 +455,8 @@ static const uint8_t *ed_bk_obj(uint32_t id, uint32_t *len)   /* 0 = no such obj
     }
     return 0;
 }
-static const uint8_t ED_BK_IDS[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 32, 33, 34, 35};   /* 35: USR4 (2.4), 9: SYN kits (2.5),
-                                                                                      * 10: MIDI LEARN (2.6) */
+static const uint8_t ED_BK_IDS[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 32, 33, 34};   /* (35: USR4, 2.4, gone in 2.7), 9: SYN kits
+                                                                                  * (2.5), 10: MIDI LEARN (2.6) */
 
 /* a flash erase silences the audio for ~50 ms and stalls USB: only while stopped (as the panel) */
 static uint32_t ed_flash_busy(void) { return song.playing || transport_req; }
@@ -735,18 +735,18 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             return;
 #if FELUCCA_ARRANGER
         if (a[0] < 2u && (song.playing || transport_req)) {
-            ed_b(a[0]); ed_b(a[1] & 3u); ed_b(project_used(a[1] & 3u));
+            ed_b(a[0]); ed_b(a[1] & 7u); ed_b(project_used(a[1] & 7u));
             ed_b(1);                                  /* optional status: transport busy */
             break;
         }
 #endif
         if (a[0] == 1u)
-            project_save(a[1] & 3u);
+            project_save(a[1] & 7u);
         else if (a[0] == 0u)
-            project_load(a[1] & 3u);
+            project_load(a[1] & 7u);
         ed_b(a[0]);
-        ed_b(a[1] & 3u);
-        ed_b(project_used(a[1] & 3u));
+        ed_b(a[1] & 7u);
+        ed_b(project_used(a[1] & 7u));
         break;
     case ED_NAMES:                                         /* preset names of an engine */
         if (na < 1u || a[0] >= NENGINES)
@@ -763,6 +763,12 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         uint32_t rc;
         if (na < 1u || a[0] >= SMP_USER_SLOTS || !flash_ok)
             return;
+        if (a[0] >= SMP_USER_ACTIVE) {                     /* 2.7: USR4 is gone (the scenes E..H are there): erasing it
+                                                            * is done (an older backup restores its empty USR4), a send is not */
+            ed_b(a[0]);
+            ed_b(cmd == ED_SMP_ERASE ? 0u : 1u);
+            break;
+        }
         rc = ed_smp_erase(a[0], cmd == ED_SMP_ERASE) ? 1u : 0u;
         ed_smp_open[a[0]] = (uint8_t)(cmd == ED_SMP_BEGIN && !rc);
         ed_b(a[0]);
@@ -773,6 +779,14 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         uint32_t off, len, rc = 0, took;
         if (na < 5u || a[0] >= SMP_USER_SLOTS || !flash_ok)
             return;
+        if (a[0] >= SMP_USER_ACTIVE) {                     /* 2.7: nothing is written to USR4 */
+            ed_b(a[0]);
+            ed_b(0);
+            ed_b(0);
+            ed_b(0);
+            ed_b(1);
+            break;
+        }
         off = (uint32_t)a[1] | (uint32_t)a[2] << 7 | (uint32_t)a[3] << 14;
         len = ed_unpack7(a + 4, na - 4u, ed_smp_buf, 256u);
         if (off < SMP_USER_DATA || (off & 0xFFu) || !len || off + len > SMP_USER_SIZE)
@@ -796,6 +810,10 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         if (na < 2u || a[0] >= SMP_USER_SLOTS || !flash_ok)
             return;
         ed_b(a[0]);
+        if (a[0] >= SMP_USER_ACTIVE) {                     /* 2.7: nothing is written to USR4 */
+            ed_b(1);
+            break;
+        }
         ed_b((uint32_t)ed_smp_end(a[0], a + 1, na - 1u));
         break;
     case ED_SMP_INFO:                                      /* -> per slot: zones (0 = empty), name, data KiB */

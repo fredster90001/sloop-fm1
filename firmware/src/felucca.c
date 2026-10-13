@@ -86,6 +86,9 @@ static int st_read(uint32_t off, void *dst, uint32_t n)   /* 256-byte IRQ-off wi
     }
     return 0;
 }
+/* flash offset -> where the CPU reads it in place (the plain XIP window, fl_plain_window_init): SLOOP 2.7 plays the
+ * scenes E..H from flash without a copy in RAM (project.c fsec_refresh). Host tests define their own */
+static const uint8_t *st_map(uint32_t off) { return fm1_xip_ptr(off); }
 static void audio_silence(void)                 /* IRQs off: the DMA would loop stale audio (buzz) */
 {
     uint32_t i;

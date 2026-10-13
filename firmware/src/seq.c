@@ -1786,7 +1786,7 @@ static void live_block(void)                       /* once a block while playing
     }
     if (chain_n && live_req < 0 && live_bar >= chain_bars) {   /* the chain: this entry has played its bars */
         chain_i = (uint8_t)((chain_i + 1u) % (chain_n < CHAIN_MAX ? chain_n : CHAIN_MAX));
-        live_req = (int8_t)(chain_sec[chain_i] & 3u);
+        live_req = (int8_t)(chain_sec[chain_i] & (ARR_SCENES - 1u));
     }
     if (live_req >= 0) {
         uint32_t s = (uint32_t)live_req;

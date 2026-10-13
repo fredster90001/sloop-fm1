@@ -67,7 +67,34 @@ int main(int argc,char **argv)
     enc[EN_K4]=99;song_screen_input(0,0);assert(arrangement.count==16);
     enc[EN_K1]=99;song_screen_input(0,0);assert(song_cursor==15);
     enc[EN_K4]=-99;song_screen_input(0,0);assert(arrangement.count==1 && song_cursor==0);
-    arr_defaults(&arrangement);ready=15;ui.msg_t=0;ui.force=1;
+    /* 2.7: eight scenes. KNOB 2 reaches H and stops there; E..H are shown and played like A..D */
+    arr_defaults(&arrangement);ready=0xFF;ui.msg_t=0;ui.force=1;song_cursor=0;
+    enc[EN_K2]=99;song_screen_input(0,0);assert(arrangement.entry[0].scene==7);
+    enc[EN_K2]=-99;song_screen_input(0,0);assert(arrangement.entry[0].scene==0);
+    enc[EN_K2]=5;song_screen_input(0,0);assert(arrangement.entry[0].scene==5);
+    song.playing=0;transport_req=0;arrangement_enabled=1;ready=0x0F;
+    press(B_PLAY);assert(!transport_req);           /* the song uses F, which is empty: not played */
+    ready=0xFF;press(B_PLAY);assert(transport_req==1);
+    transport_req=0;ready=0xFF;
+    press(B_OCTUP);press(B_OCTUP);assert(loads==2);   /* load of scene F (the step's scene) */
+    arr_defaults(&arrangement);ready=0xFF;ui.msg_t=0;ui.force=1;
+    arrangement.entry[0]=(arr_entry_t){4,4};
+    arrangement.entry[1]=(arr_entry_t){5,8};
+    arrangement.entry[2]=(arr_entry_t){6,8};
+    arrangement.entry[3]=(arr_entry_t){7,4};
+    arrangement.entry[4]=(arr_entry_t){0,4};
+    song_cursor=1;palette_set(2);song_screen_draw();
+    if(argc>2) {
+        FILE *f=fopen(argv[2],"wb");assert(f);
+        fprintf(f,"P6\n240 240\n255\n");
+        for(i=0;i<240*240;i++) {
+            uint16_t p=swap16(screen[i]);
+            uint8_t rgb[3]={(uint8_t)((p>>11)*255/31),(uint8_t)(((p>>5)&63)*255/63),(uint8_t)((p&31)*255/31)};
+            fwrite(rgb,1,3,f);
+        }
+        fclose(f);
+    }
+    arr_defaults(&arrangement);ready=15;ui.msg_t=0;ui.force=1;song_cursor=0;
     arrangement.entry[0]=(arr_entry_t){0,4};
     arrangement.entry[1]=(arr_entry_t){1,8};
     arrangement.entry[2]=(arr_entry_t){2,8};

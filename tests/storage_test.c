@@ -88,14 +88,16 @@ int main(void)
     nor[st_sector(OBJ_PROJECT0 + 2, 1) + 8] ^= 0x01;
     bad += check("both headers broken -> nothing", st_load(OBJ_PROJECT0 + 2, got, sizeof got) < 0);
     {   /* every copy of every object in the Felucca regions, off the sample slots (0xA0000..0xDBFFF) and
-         * the update staging (0xE0000..0xE4FFF; the FM6 bank's two sectors follow it), and no two sectors shared */
+         * the update staging (0xE0000..0xE4FFF; the FM6 bank's two sectors follow it, then the scenes E..H),
+         * and no two sectors shared */
         uint32_t o, c, o2, c2, inside = 1, apart = 1;
         for (o = 0; o < OBJ_COUNT; o++)
             for (c = 0; c < 2u; c++) {
                 uint32_t a = st_sector(o, c);
                 int data = a >= 0x97000u && a + 4096u <= 0xA0000u, ups = a >= 0xDC000u && a + 4096u <= 0xE0000u;
                 int glob = a >= 0xFC000u && a + 4096u <= 0xFF000u, fm6 = a >= 0xE5000u && a + 4096u <= 0xE7000u;
-                inside &= (data || ups || glob || fm6) && !(a & 0xFFFu);
+                int scn = a >= 0xE7000u && a + 4096u <= 0xEF000u;          /* 2.7: scenes E..H (the old USR4 slot's start) */
+                inside &= (data || ups || glob || fm6 || scn) && !(a & 0xFFFu);
                 for (o2 = 0; o2 < OBJ_COUNT; o2++)
                     for (c2 = 0; c2 < 2u; c2++)
                         if ((o2 != o || c2 != c) && st_sector(o2, c2) == a)
@@ -103,6 +105,46 @@ int main(void)
             }
         bad += check("data stays in the Felucca regions (autosave too)", inside);
         bad += check("every object copy has its own sector", apart);
+    }
+    {   /* SLOOP 2.7: scenes E..H (OBJ_PROJECT4..7): the first eight sectors of the old USR4 slot, each A/B as any object */
+        static char sa[3816], sg[3816];
+        uint32_t k, ok = 1;
+        memset(nor, 0xFF, sizeof nor);
+        memcpy(nor + 0xE7000, "FSMP", 4);                /* what a USR4 sample slot left there: not a record */
+        memcpy(nor + 0xEF000 - 4096, "FSMP", 4);
+        bad += check("2.7: an old USR4 sample header is no scene", st_load(OBJ_PROJECT4, sg, sizeof sg) < 0);
+        for (k = 0; k < 4u; k++) {
+            memset(sa, 'E' + (int)k, sizeof sa);
+            ok &= st_save(OBJ_PROJECT4 + k, sa, sizeof sa) == 0;
+            ok &= st_save(OBJ_PROJECT4 + k, sa, sizeof sa) == 0;        /* twice: both copies written */
+        }
+        bad += check("2.7: E..H save (a whole 3816-byte project, twice)", ok);
+        ok = 1;
+        for (k = 0; k < 4u; k++) {
+            memset(sa, 'E' + (int)k, sizeof sa);
+            ok &= st_load(OBJ_PROJECT4 + k, sg, sizeof sg) == (int)sizeof sa && !memcmp(sg, sa, sizeof sa);
+        }
+        bad += check("2.7: E..H each load their own project", ok);
+        bad += check("2.7: A..D untouched by E..H", st_load(OBJ_PROJECT0, sg, sizeof sg) < 0 &&
+                     st_load(OBJ_PROJECT0 + 3, sg, sizeof sg) < 0 && st_load(OBJ_AUTOSAVE, sg, sizeof sg) < 0);
+        memset(sa, 'x', sizeof sa);
+        ok = st_save(OBJ_PROJECT0 + 3, sa, sizeof sa) == 0;              /* D beside E */
+        memset(sa, 'G', sizeof sa);
+        bad += check("2.7: saving D leaves E..H as they were", ok && st_load(OBJ_PROJECT4 + 2, sg, sizeof sg) == (int)sizeof sa &&
+                     !memcmp(sg, sa, sizeof sa));
+        bad += check("2.7: erase one (an object of no bytes): G is empty, the others stay",
+                     st_save(OBJ_PROJECT4 + 2, sa, 0) == 0 && st_load(OBJ_PROJECT4 + 2, sg, sizeof sg) == 0 &&
+                     st_load(OBJ_PROJECT4 + 3, sg, sizeof sg) == (int)sizeof sa);
+        {   /* a torn save of F keeps the last good F */
+            static char f1[3816];
+            memset(f1, 'F', sizeof f1);
+            memset(sa, 'z', sizeof sa);
+            fail_after = 5;
+            st_save(OBJ_PROJECT4 + 1, sa, sizeof sa);
+            fail_after = -1;
+            bad += check("2.7: a torn save of F keeps the last F", st_load(OBJ_PROJECT4 + 1, sg, sizeof sg) == (int)sizeof f1 &&
+                         !memcmp(sg, f1, sizeof f1));
+        }
     }
     {   /* SLOOP 2.5: the settings in two parts (persist_t, then the SYN kits): one record, A/B as any other */
         static char p1[88], p2[1464], all[88 + 1464], got2[88 + 1464];

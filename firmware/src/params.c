@@ -166,7 +166,7 @@ static const param_desc_t GP[G_COUNT] = {
     [G_SYNC] = PE("SYNC", N_SYNC, 0),           /* a setting of the FM-1, not of a project (panel.c lights_sync) */
     [G_ROUTE] = PE("IN", N_MIN, 0),             /* MIDI IN: NOTES (and the clock), CLOCK only, or CH n: that channel only (a setting of the FM-1) */
     [G_INFO] = PD("CPU", F_INT, 0, 0, 0),
-    [G_SLOT] = PD("SLOT", F_INT, 1, 4, 1),
+    [G_SLOT] = PD("SLOT", F_INT, 1, 8, 1),            /* (2.7: 1..8 = scenes A..H) */
     [G_NAME] = PE("NAME", N_DASH, 0),
     [G_LOAD] = PE("LOAD", N_GO, 0),
     [G_SAVE] = PE("SAVE", N_GO, 0),

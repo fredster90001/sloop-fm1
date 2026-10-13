@@ -159,6 +159,32 @@ static uint32_t proj_hash(const void *p, uint32_t n)   /* FNV-1a over n bytes */
 static uint32_t proj_sum(const project_t *p) { return proj_hash(p, sizeof *p - 4u); }
 static int proj_ok(const project_t *q) { return q->magic == PROJ_MAGIC && q->size == sizeof *q && q->sum == proj_sum(q); }
 
+/* ---- SLOOP 2.7: eight scenes A..H. A..D are the RAM slots above (also in flash, as before). E..H live in flash only
+ * (storage.c OBJ_PROJECT4..7) and play from there, through the XIP window: they cost no RAM. One scene captured while
+ * playing (SAVE + key: a flash write would stop the audio ~50 ms) waits in proj_stage until the transport is stopped.
+ * fsec_ptr[n] is scene 4 + n in flash (0: none), found by fsec_refresh (scenes.c); fsec_used bit n: it
+ * holds a project, checked once there, so asking is cheap (the screens ask every frame). */
+#define NSEC 8u                                /* scenes A..H */
+#define NSEC_RAM 4u                            /* A..D: proj_slot */
+static project_t proj_stage __attribute__((section(".pool")));
+static int8_t stage_slot = -1;                 /* the scene proj_stage holds (4..7), -1: none */
+static const project_t *fsec_ptr[NSEC - NSEC_RAM];
+static uint8_t fsec_used;
+static const project_t *proj_view(uint32_t s)  /* scene s as a project to read (0: none). Audio ISR safe */
+{
+    if (s < NSEC_RAM)
+        return &proj_slot[s];
+    if (s >= NSEC)
+        return 0;
+    return stage_slot == (int8_t)s ? &proj_stage : fsec_ptr[s - NSEC_RAM];
+}
+static int sec_ok(uint32_t s)                  /* scene s holds a project */
+{
+    if (s < NSEC_RAM)
+        return proj_ok(&proj_slot[s]);
+    return s < NSEC && (stage_slot == (int8_t)s || ((fsec_used >> (s - NSEC_RAM)) & 1u));
+}
+
 /* ---- old formats -> format 5 */
 /* an old step into a synth step (no level, no ratchet) */
 static void step_from8(step_t *d, const step8_t *s)
@@ -526,18 +552,25 @@ static void proj_fetch(uint32_t slot)
         q->magic = 0;
 }
 #include "fm6_bank.c"                           /* the FM6 patch bank (eng_fm6.c PTCH B1..B27): staged in proj_tmp */
+
 #endif
+#include "scenes.c"                          /* SLOOP 2.7: scenes E..H (flash, staging, live store) */
 
 static void project_save(uint32_t slot)
 {
-    project_t *p = &proj_slot[slot & 3u];
+    slot &= NSEC - 1u;
 #if FELUCCA_ARRANGER
     if (song.playing || transport_req) { ui_message("STOP BEFORE SAVE"); return; }
 #endif
-    proj_capture(p);
+    if (slot >= NSEC_RAM) {                             /* E..H: staged, then written (scenes.c) */
+        int rc = scene_save(slot);
+        ui_message(rc < 0 ? "SAVE ERROR" : rc ? "SAVED (RAM)" : "SAVED");
+        return;
+    }
+    proj_capture(&proj_slot[slot]);
 #if FELUCCA_FLASH
     if (flash_ok) {
-        ui_message(st_save(OBJ_PROJECT0 + (slot & 3u), p, sizeof *p) ? "SAVE ERROR" : "SAVED");
+        ui_message(st_save(OBJ_PROJECT0 + slot, &proj_slot[slot], sizeof proj_slot[slot]) ? "SAVE ERROR" : "SAVED");
         return;
     }
 #endif
@@ -550,22 +583,25 @@ static void project_save(uint32_t slot)
  * so song mode still plays. Stopped only: a flash erase stops the audio ~50 ms */
 static void project_erase(uint32_t slot)
 {
-    slot &= 3u;
+    slot &= NSEC - 1u;
 #if FELUCCA_ARRANGER
     if (song.playing || transport_req) { ui_message("STOP BEFORE ERASE"); return; }
 #endif
-    if (!proj_ok(&proj_slot[slot])) {
+    if (!sec_ok(slot)) {
         ui_message("EMPTY SLOT");
         return;
     }
 #if FELUCCA_FLASH
-    if (flash_ok && st_save(OBJ_PROJECT0 + slot, &proj_slot[slot], 0)) {
+    if (flash_ok && st_save(sec_obj(slot), &proj_slot[0], 0)) {   /* (an object of no bytes: the source is not read) */
         ui_message("ERASE ERROR");
         return;
     }
 #endif
     fm1_irq_off();
-    memset(&proj_slot[slot], 0, sizeof proj_slot[slot]);
+    if (slot < NSEC_RAM)
+        memset(&proj_slot[slot], 0, sizeof proj_slot[slot]);
+    else
+        scene_forget(slot);
     sec_dirty &= (uint8_t)~(1u << slot);
     if (live_sec == (int8_t)slot)
         live_sec = -1;
@@ -599,15 +635,17 @@ static void project_apply(const project_t *p)
 
 static void project_load(uint32_t slot)
 {
-    project_t *p = &proj_slot[slot & 3u];
+    const project_t *p;
+    slot &= NSEC - 1u;
+    p = proj_view(slot);
 #if FELUCCA_ARRANGER
     if (song.playing || transport_req) { ui_message("STOP BEFORE LOAD"); return; }
 #endif
 #if FELUCCA_FLASH
-    if (flash_ok && !proj_ok(p))
+    if (slot < NSEC_RAM && flash_ok && !proj_ok(p))
         proj_fetch(slot);
 #endif
-    if (!proj_ok(p)) {
+    if (!p || !sec_ok(slot)) {
         ui_message("EMPTY SLOT");
         return;
     }
@@ -746,7 +784,7 @@ static void persist_boot(void)                    /* before settings_init / pane
             else
                 p.lights = 0;
 #if FELUCCA_ARRANGER
-            if (p.magic == PERSIST_MAGIC && arr_valid(&p.arrangement, 15u))
+            if (p.magic == PERSIST_MAGIC && arr_valid(&p.arrangement, ARR_READY_ALL))
                 arrangement = p.arrangement;
             else
                 p.arrangement = arrangement;
@@ -776,6 +814,8 @@ static void persist_boot(void)                    /* before settings_init / pane
                 if (n != (int)sizeof proj_slot[i] || memcmp(&proj_tmp.v6, &proj_slot[i], sizeof proj_slot[i]))
                     sec_dirty |= (uint8_t)(1u << i);
             }
+        for (i = NSEC_RAM; i < NSEC; i++)              /* 2.7: E..H stay in flash: found, not copied */
+            fsec_refresh(i);
     }
     dsu_boot();                                    /* SLOOP 2.5: the SYN kits (after the settings) */
     up_boot();                                     /* user presets */
@@ -783,7 +823,7 @@ static void persist_boot(void)                    /* before settings_init / pane
 #endif
 }
 
-static int project_used(uint32_t slot) { return proj_ok(&proj_slot[slot & 3u]); }
+static int project_used(uint32_t slot) { return sec_ok(slot & (NSEC - 1u)); }
 
 #if FELUCCA_FLASH
 /* SLOOP 2.5: the settings object holds the SYN kits after persist_t (drum_synth.c dsu): firmware before 2.5 reads
@@ -944,7 +984,7 @@ static uint32_t settings_restore(const void *raw, uint32_t n)
     if (p.magic != PERSIST_MAGIC || p.palette >= NPALETTES || p.lowcut > 1u || p.zoom > 1u || !panel_valid(&p.panel))
         return 2;
 #if FELUCCA_ARRANGER
-    if (!arr_valid(&p.arrangement, 15u))
+    if (!arr_valid(&p.arrangement, ARR_READY_ALL))
         return 2;
     if ((song.playing || transport_req) && memcmp(&p.arrangement, &arrangement, sizeof arrangement))
         return 3;                                    /* SLOOP 2.5: a new song order only when stopped (as on the SONG screen) */
@@ -1011,32 +1051,32 @@ static void arrangement_save(void)
 /* ---- live sections (SAVE + key, ui_layers.c). A section is a project slot (A..D = 1..4): stored into RAM
  * at once (playing too), written to flash once the transport is stopped and nothing sounds (an erase
  * stops the audio for ~50 ms); a song recorded with SONG REC is saved the same way. */
-static void section_store(uint32_t s)
-{
-    s &= 3u;
-    fm1_irq_off();                                      /* (the audio ISR may be applying a section) */
-    proj_capture(&proj_slot[s]);
-    live_sec = (int8_t)s;
-    fm1_irq_on();
-    sec_dirty |= (uint8_t)(1u << s);
-}
 static void section_load(uint32_t s)                    /* stopped: the section is the loop now */
 {
-    s &= 3u;
-    project_apply(&proj_slot[s]);
+    const project_t *p;
+    s &= NSEC - 1u;
+    p = proj_view(s);
+    if (!p || !sec_ok(s))
+        return;
+    project_apply(p);
     live_sec = (int8_t)s;
 }
 static void sections_write(void)                        /* the dirty sections and song into flash */
 {
     uint32_t i;
 #if FELUCCA_FLASH
-    if (flash_ok)
-        for (i = 0; i < 4u; i++)
+    if (flash_ok) {
+        for (i = 0; i < NSEC_RAM; i++)
             if (((sec_dirty >> i) & 1u) && st_save(OBJ_PROJECT0 + i, &proj_slot[i], sizeof proj_slot[i]) == 0)
                 sec_dirty &= (uint8_t)~(1u << i);       /* (a failed write stays dirty: tried again later) */
+        fsec_flush();                                   /* 2.7: the staged one of E..H (clears its own bit) */
+        for (i = NSEC_RAM; i < NSEC; i++)
+            if (stage_slot != (int8_t)i)
+                sec_dirty &= (uint8_t)~(1u << i);       /* (a bit with nothing staged: nothing to write) */
+    }
     if (!flash_ok)
 #endif
-        sec_dirty = 0;
+        sec_dirty = 0;                                  /* (RAM only: nothing to write; a staged scene stays staged) */
     (void)i;
     if (song_dirty) {
         song_dirty = 0;

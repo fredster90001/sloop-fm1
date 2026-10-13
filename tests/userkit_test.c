@@ -127,26 +127,25 @@ int main(void)
     drum_on(36, 110);
     check(run_peak(40) < 64, "USR2 (an empty slot): silent");
 
-    {   /* USR3+4: one kit over two slots, the editor's split: KICK and HAT in USR3, SNARE and OPEN HAT in USR4 */
+    {   /* USR3+4: SLOOP 2.7 took USR4's flash for the scenes E..H (storage.c): even a valid image there is not read,
+         * USR4 stays empty. The kit keeps its place in the list (the old kit numbers) and what USR3 holds still plays */
         static const uint8_t n3[2] = {36, 42}, n4[2] = {38, 46};
         static const uint32_t l3[2] = {30000, 4000}, l4[2] = {6000, 60000};
         slot_build(2, n3, l3, 2);
         slot_build(3, n4, l4, 2);
-        check(usr_nz[2] == 2u && usr_nz[3] == 2u, "USR3 and USR4 read: 2 zones each (USR4 from its own place)");
+        check(usr_nz[2] == 2u && usr_nz[3] == 0u, "USR3 read: 2 zones; USR4 stays empty (its flash holds scenes E..H)");
         TDRUM->p[P_E0] = (int16_t)DRUM_PAIR;
         quiet(); drum_on(36, 110);
         check(drum_voice_on(DZ_USR + 2 * 16 + 0), "USR3+4: KICK from USR3");
         quiet(); drum_on(38, 110);
-        check(drum_voice_on(DZ_USR + 3 * 16 + 0) && run_peak(40) > 2000, "USR3+4: SNARE from USR4, and it sounds");
-        quiet(); drum_on(46, 110); run_peak(4); drum_on(42, 110);
-        check(!drum_voice_on(DZ_USR + 3 * 16 + 1) && drum_voice_on(DZ_USR + 2 * 16 + 1), "USR3+4: the closed hat (USR3) chokes the open one (USR4)");
+        check(run_peak(40) < 64, "USR3+4: the SNARE was in USR4: silent");
         quiet(); drum_on(49, 110);
         check(run_peak(40) < 64, "USR3+4: a lane in neither slot (CRASH): silent");
-        TDRUM->p[P_E0] = (int16_t)(DRUM_USR + 3u);       /* USR4 alone: its two sounds */
+        TDRUM->p[P_E0] = (int16_t)(DRUM_USR + 3u);       /* USR4 alone: empty */
         quiet(); drum_on(36, 110);
-        check(run_peak(40) < 64, "USR4 alone: no KICK there");
+        check(run_peak(40) < 64, "USR4 alone: empty, silent");
         quiet(); drum_on(38, 110);
-        check(drum_voice_on(DZ_USR + 3 * 16 + 0), "USR4 alone: its SNARE");
+        check(run_peak(40) < 64 && !drum_voice_on(DZ_USR + 3 * 16 + 0), "USR4 alone: no SNARE either");
         quiet();
     }
     {   /* the sequencer: KICK on 1, SNARE on 5 */

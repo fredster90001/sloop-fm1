@@ -22,9 +22,10 @@
  * project (a ring fills; let go before and nothing happens). */
 static const uint8_t LAYER_BTN[LY_COUNT] = {NB, B_FX, B_EDIT, B_ARP, B_SEQ, B_SCL, B_GLO, B_SAVE};
 static const char *const LAYER_NAME[LY_COUNT] = {"", "punch", "erase", "roll", "steps", "key", "mix", "song"};
-static void section_store(uint32_t s);                  /* project.c */
+static int section_store(uint32_t s);                   /* project.c (2.7: 0 = not stored now) */
 static void section_load(uint32_t s);
 static uint8_t sec_armed;                               /* store over a used section: the key again within 3 s */
+static uint8_t sec_bank;                                /* SLOOP 2.7: the SAVE layer's keys 1..8 are scenes A..D (0) or E..H (1) */
 static uint32_t sec_armed_ms;
 static uint8_t chain_tap[CHAIN_MAX], chain_taps;        /* the section keys tapped in this SAVE hold (the first
                                                          * is asked for at once; two or more: a chain on release) */
@@ -358,40 +359,50 @@ static void layer_key(uint32_t layer, uint32_t k, uint32_t down)
     }
     case LY_SONG: {                                     /* sections A..D: play, store; loop / song; SONG REC */
         char b[2] = {0, 0};
+        uint32_t bk = sec_bank ? 4u : 0u, sc;               /* the scene a key stands for: its place in the bank */
         if (w < 0)
             return;
-        b[0] = (char)('A' + (w & 3));
+        if (w == 14) {                                      /* 2.7: key 15 turns the keys 1..8 to A..D or E..H */
+            sec_bank ^= 1u;
+            sec_armed = 0;
+            ui_message(sec_bank ? "SCENES E-H" : "SCENES A-D");
+            return;
+        }
+        sc = (uint32_t)(w & 3) + bk;
+        b[0] = (char)('A' + sc);
         if (w < 4) {
             if (arrangement_clock.running) {
                 ui_message("SONG PLAYS");
-            } else if (!((arrangement_ready() >> w) & 1u)) {
+            } else if (!((arrangement_ready() >> sc) & 1u)) {
                 ui_say("EMPTY ", b);
             } else if (song.playing) {
                 if (!chain_taps) {                          /* the first tap: as ever, and any chain stops */
                     fm1_irq_off();
                     chain_n = 0;
-                    live_req = (int8_t)w;
+                    live_req = (int8_t)sc;
                     fm1_irq_on();
                     ui_say("NEXT: ", b);
                 } else {
                     ui.msg_t = 0;                           /* (the sub line shows the chain) */
                 }
                 if (chain_taps < CHAIN_MAX && (fm1_in.buttons & ly_bit[LY_SONG]))
-                    chain_tap[chain_taps++] = (uint8_t)w;   /* (SAVE held: more taps make a chain) */
+                    chain_tap[chain_taps++] = (uint8_t)sc;  /* (SAVE held: more taps make a chain) */
             } else {
-                section_load((uint32_t)w);
+                section_load(sc);
                 ui_say("LOADED ", b);
             }
         } else if (w < 8) {
-            uint32_t s = (uint32_t)w - 4u;
+            uint32_t s = sc;
             if (((arrangement_ready() >> s) & 1u) && !(sec_armed == s + 1u && fm1_ms - sec_armed_ms < 3000u)) {
                 sec_armed = (uint8_t)(s + 1u);
                 sec_armed_ms = fm1_ms;
                 ui_say("AGAIN: ", b);
             } else {
                 sec_armed = 0;
-                section_store(s);
-                ui_say("SAVED ", b);
+                if (section_store(s))
+                    ui_say("SAVED ", b);
+                else
+                    ui_message("STOP TO SAVE");             /* (E..H: another one still waits for the flash) */
             }
         } else if (w == 12) {
             if (srec) {
@@ -461,7 +472,7 @@ static void chain_sub(char *sub, uint32_t n)
     str_cpy(sub, "chain", n);
     for (i = 0; i < m && i < CHAIN_MAX && k + 2u < n; i++) {
         sub[k++] = ' ';
-        sub[k++] = (char)('A' + ((chain_taps >= 2u ? chain_tap[i] : chain_sec[i]) & 3u));
+        sub[k++] = (char)('A' + ((chain_taps >= 2u ? chain_tap[i] : chain_sec[i]) & 7u));
     }
     sub[k] = 0;
 }
@@ -968,12 +979,13 @@ static void layer_screen_draw(void)
     }
     case LY_SONG: {                                     /* A..D (playing lit, next one framed), store, modes */
         uint32_t ready = arrangement_ready();
-        static const char *const SL[4] = {"A", "B", "C", "D"};
+        static const char *const SL[8] = {"A", "B", "C", "D", "E", "F", "G", "H"};
+        uint32_t bk = sec_bank ? 4u : 0u;
         col = C_WHITE;
         if (srec == 2u) {
             char b[8];
             str_cpy(sub, "rec ", sizeof sub);
-            str_cpy(sub + 4, SL[srec_e[srec_n ? srec_n - 1u : 0u].scene & 3u], 2);
+            str_cpy(sub + 4, SL[srec_e[srec_n ? srec_n - 1u : 0u].scene & 7u], 2);
             str_cpy(sub + str_len(sub), " bar ", 6);
             fmt_int(b, srec_n ? srec_e[srec_n - 1u].bars + 1 : 1);
             str_cpy(sub + str_len(sub), b, 6);
@@ -983,17 +995,18 @@ static void layer_screen_draw(void)
             str_cpy(sub, arrangement_enabled ? "song mode" : srec ? "rec armed" : "play  store", sizeof sub);
         }
         for (i = 0; i < 4u; i++) {                      /* (the chain's next entry framed as the one asked for) */
-            int used = (ready >> i) & 1u, playing = live_sec == (int8_t)i && !arrangement_clock.running;
-            int next = live_req == (int8_t)i ||
-                       (chain_n && live_req < 0 && (chain_sec[((chain_i + 1u) % chain_n) % CHAIN_MAX] & 3u) == i);
-            str_cpy(tl[i].lab, SL[i], 8);
+            uint32_t sc = i + bk;
+            int used = (ready >> sc) & 1u, playing = live_sec == (int8_t)sc && !arrangement_clock.running;
+            int next = live_req == (int8_t)sc ||
+                       (chain_n && live_req < 0 && (chain_sec[((chain_i + 1u) % chain_n) % CHAIN_MAX] & 7u) == sc);
+            str_cpy(tl[i].lab, SL[sc], 8);
             tl[i].bg = used ? (playing ? TE_COL[i] : TE_DIM[i]) : TE_G1;
             tl[i].fg = used ? C_BLACK : TE_G3;
             tl[i].top = next ? C_WHITE : 0;
             str_cpy(tl[4 + i].lab, "save A", 8);
-            tl[4 + i].lab[5] = (char)('A' + i);
-            tl[4 + i].bg = sec_armed == i + 1u ? TE_RED : TE_G1;
-            tl[4 + i].fg = sec_armed == i + 1u ? C_BLACK : TE_G4;
+            tl[4 + i].lab[5] = (char)('A' + sc);
+            tl[4 + i].bg = sec_armed == sc + 1u ? TE_RED : TE_G1;
+            tl[4 + i].fg = sec_armed == sc + 1u ? C_BLACK : TE_G4;
             tl[4 + i].top = TE_DIM[i];
         }
         str_cpy(tl[12].lab, arrangement_enabled ? "song" : "loop", 8);
@@ -1003,6 +1016,9 @@ static void layer_screen_draw(void)
         tl[13].bg = srec == 2u ? TE_RED : TE_G1;
         tl[13].fg = srec == 2u ? C_BLACK : TE_RED;
         tl[13].top = srec == 1u ? TE_RED : 0;
+        str_cpy(tl[14].lab, sec_bank ? "E-H" : "A-D", 8);     /* key 15: which four scenes keys 1..8 reach */
+        tl[14].bg = sec_bank ? C_WHITE : TE_G2;
+        tl[14].fg = sec_bank ? C_BLACK : C_WHITE;
         str_cpy(tl[15].lab, "chain", 8);
         tl[15].bg = TE_G1;
         tl[15].fg = TE_G4;
@@ -1062,7 +1078,7 @@ static void hold_screen_draw(void)
         b[6] = (char)('1' + ui.hold_trk);
     } else {
         str_cpy(b, "project in slot 1", sizeof b);
-        b[16] = (char)('0' + clamp(song.g[G_SLOT], 1, 4));
+        b[16] = (char)('0' + clamp(song.g[G_SLOT], 1, 8));
     }
     te_text_c(120, 4, b, TE_G4);
     te_text_c(120, 30, "keep holding", TE_G3);

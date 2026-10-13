@@ -58,13 +58,14 @@ static void project_save(uint32_t i) { (void)i; saves++; ui_message("SAVED"); }
 static void project_load(uint32_t i) { (void)i; loads++; }
 static void project_erase(uint32_t i) { (void)i; erases++; ui_message("ERASED"); }
 static void arrangement_save(void) {}
-static uint32_t arrangement_ready(void) { return 3; }
+static uint32_t ready_mask = 3;                   /* (A and B hold a scene; 2.7: bits 4..7 are E..H) */
+static uint32_t arrangement_ready(void) { return ready_mask; }
 static void arrangement_apply(uint32_t s) { (void)s; }
 static uint32_t section_bars(uint32_t s) { return s == 1u ? 2u : 1u; }   /* (B: two bars) */
 static void song_backup(void) {}
 static void song_restore(void) {}
 static uint32_t sec_stores, sec_loads;
-static void section_store(uint32_t s) { sec_stores++; live_sec = (int8_t)s; }
+static int section_store(uint32_t s) { sec_stores++; live_sec = (int8_t)s; return 1; }
 static void section_load(uint32_t s) { sec_loads++; live_sec = (int8_t)s; }
 static int up_used(uint32_t k) { return k < 2; }
 static int up_load(uint32_t k) { (void)k; return 0; }
@@ -479,6 +480,34 @@ int main(int argc, char **argv)
     check(chain_n == 0u && live_req == 1, "a single tap of B: the chain ends, B asked for");
     press(B_SAVE); frames(15);
     live_req = -1; song.playing = 0;
+    {   /* (2.7) key 15 turns the keys 1..8 from scenes A..D to E..H and back */
+        ready_mask = 3u | 0x10u | 0x40u;               /* A, B, E and G hold a scene */
+        sec_stores = sec_loads = 0; sec_armed = 0; live_sec = -1;
+        check(sec_bank == 0u, "scenes A..D on the keys to begin with");
+        key(key_of_white(14)); check(sec_bank == 1u && sec_armed == 0u, "key 15: the keys 1..8 are E..H now");
+        ui.force = 1; frame(); ppm("layer-song-efgh");
+        key(key_of_white(4)); check(sec_stores == 0 && sec_armed == 5u, "store over a used E: asks again");
+        key(key_of_white(4)); check(sec_stores == 1 && live_sec == 4 && sec_armed == 0u, "again: the loop stored in E");
+        key(key_of_white(5)); check(sec_stores == 2 && live_sec == 5, "an empty F: stored at once");
+        live_sec = -1;
+        key(key_of_white(0)); check(sec_loads == 1 && live_sec == 4, "stopped: E loaded as the loop");
+        key(key_of_white(1)); check(sec_loads == 1, "an empty F (not in the ready mask): not played");
+        song.playing = 1; clk_beat = 1; clk_pos = 0; live_req = -1;
+        key(key_of_white(2)); check(live_req == 6, "playing: G asked for the next bar");
+        release(B_SAVE); frames(2); live_req = -1;
+        press(B_SAVE); frames(15);
+        key(key_of_white(0)); key(key_of_white(2));
+        ui.force = 1; frame();
+        check(chain_taps == 2u && str_eq(sub_line(), "chain E G"), "SAVE held, E then G tapped: \"chain E G\"");
+        release(B_SAVE); frames(2);
+        check(chain_n == 2u && chain_sec[0] == 4 && chain_sec[1] == 6, "SAVE let go: the chain E G plays");
+        chain_n = 0; live_req = -1; song.playing = 0;
+        press(B_SAVE); frames(15);
+        key(key_of_white(14)); check(sec_bank == 0u, "key 15 again: back to A..D");
+        key(key_of_white(0)); check(sec_loads == 2 && live_sec == 0, "stopped: key 1 is A again");
+        key(key_of_white(14)); key(key_of_white(14));
+        ready_mask = 3;
+    }
     key(key_of_white(13)); check(srec == 1u && !arrangement_enabled, "SONG REC armed (loop mode)");
     ui.force = 1; frame(); ppm("layer-song");
     key(key_of_white(13)); check(srec == 0u, "SONG REC again: off");

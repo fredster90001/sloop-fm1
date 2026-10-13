@@ -381,9 +381,9 @@ static uint32_t graph_signature(void)
     h ^= (uint32_t)TSEL->preset * 7u + (uint32_t)song.g[G_SLOT] * 13u + TSEL->user * 257u + up_gen * 7919u + ui.uslot * 104729u;
     if (pg->graph == GR_SLCR && t->p[P_SLCR])        /* the SLICER's step playing */
         h ^= (sl[song.sel].idx + 1u) * 2654435761u;
-    if (pg->graph == GR_SLOTS)                       /* (a checksum over each slot) */
-        for (i = 0; i < 4u; i++)
-            h ^= (uint32_t)project_used(i) << (20u + i);
+    if (pg->graph == GR_SLOTS)                       /* (a checksum over each slot: 8 since 2.7) */
+        for (i = 0; i < 8u; i++)
+            h ^= (uint32_t)project_used(i) << (16u + i);
     if (pg->graph == GR_STEPS || pg->graph == GR_ROLL) {
         uint32_t ph = song.playing ? t->seq_idx : 0xFFFFu;
         if (pg->graph == GR_ROLL && ph / 16u != ui.bank)
@@ -441,19 +441,19 @@ static void graph_user(void)
 }
 
 /* project slots: used / empty, the selected one in white */
-static void graph_slots(void)
+static void graph_slots(void)                       /* 2.7: eight slots (scenes A..H) in two columns of four */
 {
     uint32_t i;
-    for (i = 0; i < 4u; i++) {
-        int32_t y = 8 + (int32_t)i * 26;
+    for (i = 0; i < 8u; i++) {
+        int32_t y = 8 + (int32_t)(i & 3u) * 26, x = (int32_t)(i >> 2) * 120;
         char b[4];
         int sel = (int32_t)i + 1 == song.g[G_SLOT];
         b[0] = (char)('1' + i);
         b[1] = 0;
         if (sel)
-            cv_rect(4, y + 6, 3, 3, C_WHITE);
-        cv_text(14, y, &FONT_S, b, sel ? C_WHITE : C_GRAY);
-        cv_text(40, y, &FONT_S, project_used(i) ? "USED" : "EMPTY", project_used(i) ? (sel ? C_WHITE : C_HI) : C_DIM);
+            cv_rect(x + 4, y + 6, 3, 3, C_WHITE);
+        cv_text(x + 14, y, &FONT_S, b, sel ? C_WHITE : C_GRAY);
+        cv_text(x + 40, y, &FONT_S, project_used(i) ? "USED" : "EMPTY", project_used(i) ? (sel ? C_WHITE : C_HI) : C_DIM);
     }
 }
 
