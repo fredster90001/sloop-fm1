@@ -73,7 +73,7 @@ jobs:
 
       # Your own installer page (the public one installs only the original SLOOP): the same installer, with this package.
       - name: Make the installer page
-        run: python3 web/make_site.py build/felucca.fwsc 2.8.1+8S build/site
+        run: python3 web/make_site.py build/felucca.fwsc 2.8.1+8S.1 build/site
 
       - name: Upload the installer page
         uses: actions/upload-pages-artifact@v3
