@@ -22,6 +22,11 @@ static void fm1_irq_on(void) {}
 #include "../src/params.c"
 #include "../src/voice.c"
 #include "../src/slicer.c"
+#include "../src/cpu1.h"                        /* (2.7) no second core in the browser: every unit renders here */
+static int cpu1_run(cpu1_job_t fn, uint32_t arg) { (void)fn; (void)arg; return 0; }
+static int cpu1_wait(void) { return 0; }
+static int cpu1_on(void) { return 0; }
+static uint32_t cpu1_ticks(void) { return 0; }
 #include "../src/fx.c"
 static void fm1_delay_ms(uint32_t ms) { (void)ms; }
 #include "../src/usb.c"

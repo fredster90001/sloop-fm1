@@ -117,6 +117,35 @@ try {
   });
   ok(keys.length === 1 && keys[0].endsWith("-next"), "a new site: its sw.js replaces the copy (" + keys.join(", ") + ")");
   writeFileSync(swf, sw0);
+  await stop();
+
+  /* (2.7) a new build keeps the firmware's name: the copy the browser kept of the build before (a server that lets it
+     keep one, no service worker) is not offered as "damaged": the installer asks the server first */
+  const fw = join(site, "firmware", "sloop-2.7.fwsc"), ix = join(site, "webapp", "installer", "index.html");
+  const fw0 = readFileSync(fw), ix0 = readFileSync(ix, "utf8");
+  server = spawn("python3", ["-c", `import http.server, os
+class H(http.server.SimpleHTTPRequestHandler):
+    def end_headers(self):
+        if self.path.endswith(".fwsc"): self.send_header("Cache-Control", "max-age=3600")
+        super().end_headers()
+os.chdir(${JSON.stringify(site)}); http.server.ThreadingHTTPServer(("127.0.0.1", ${PORT}), H).serve_forever()`], { stdio: "ignore" });
+  for (let i = 0; i < 50; i++) { try { await fetch(base + "sw.js"); break; } catch { await sleep(100); } }
+  const c2 = await browser.newContext({ serviceWorkers: "block" });
+  const p2 = await c2.newPage();
+  await p2.addInitScript(() => { if (!navigator.requestMIDIAccess) navigator.requestMIDIAccess = () => Promise.reject(new Error("none")); });
+  await p2.goto(base + "installer/");
+  await p2.waitForTimeout(800);
+  const first = await p2.textContent("#status");
+  const fw1 = Buffer.from(fw0); fw1[fw1.length - 1] ^= 0x55;
+  writeFileSync(fw, fw1);
+  const { createHash } = await import("node:crypto");
+  writeFileSync(ix, ix0.replace(/"sha256": "[0-9a-f]+"/, `"sha256": "${createHash("sha256").update(fw1).digest("hex")}"`));
+  await p2.reload();
+  await p2.waitForTimeout(800);
+  const second = await p2.textContent("#status");
+  ok(/SLOOP 2\.7/.test(first) && /SLOOP 2\.7/.test(second), "a new build of the same name: the new firmware, not the browser's old copy");
+  writeFileSync(fw, fw0); writeFileSync(ix, ix0);
+  await c2.close();
 } finally {
   await stop();
   await browser.close();
