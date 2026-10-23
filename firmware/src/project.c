@@ -701,6 +701,16 @@ UI_SMALL static void project_load(uint32_t slot)
     if (slot < NSEC_RAM && flash_ok && !proj_ok(p))
         proj_fetch(slot);
 #endif
+    if (slot >= NSEC_RAM && !sec_ok(slot)) {            /* 8S.1: an empty E..H scene: UNDELETE, its last project if it is still there */
+        int rc = scene_undelete(slot);
+        if (rc) {
+            if (rc > 0)
+                ui_say("RESTORED SECTION ", SEC_NAME[slot & 7u]);
+            else
+                ui_message("RESTORE ERROR");
+            return;
+        }
+    }
     if (!p || !sec_ok(slot)) {
         ui_say("EMPTY SECTION ", SEC_NAME[slot & 7u]);
         return;

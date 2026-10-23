@@ -164,9 +164,38 @@ int main(void)
     check("save F again, the flash works", scene_save(5) == 0 && proj_view(5)->sum == working_sum() && stage_slot < 0);
 
     /* --- erase (as project_erase does it: an object of no bytes, then forget) */
-    check("erase G: an object of no bytes", st_save(sec_obj(6), &proj_slot[0], 0) == 0);
-    scene_forget(6);
-    check("... G is empty, E F H are not touched", !sec_ok(6) && sec_ok(4) && sec_ok(5) && sec_ok(7));
+    {
+        uint32_t g_before = proj_view(6)->sum;
+        check("UNDELETE of a scene that is not empty: nothing to do (0)", scene_undelete(6) == 0);
+        check("erase G: an object of no bytes", st_save(sec_obj(6), &proj_slot[0], 0) == 0);
+        scene_forget(6);
+        check("... G is empty, E F H are not touched", !sec_ok(6) && sec_ok(4) && sec_ok(5) && sec_ok(7));
+        check("UNDELETE G (the erased scene's older copy): back (1), the same loop it was, nothing waits",
+              scene_undelete(6) == 1 && sec_ok(6) && proj_view(6)->sum == g_before && stage_slot < 0);
+        boot();
+        check("... still G after a restart, E F H untouched", sec_ok(6) && proj_view(6)->sum == g_before &&
+              sec_ok(4) && sec_ok(5) && sec_ok(7));
+        check("UNDELETE of a scene A..D (RAM slots), or of one with nothing erased behind it: 0",
+              scene_undelete(1) == 0 && scene_undelete(4) == 0);
+        st_save(sec_obj(6), &proj_slot[0], 0);             /* erased twice: both copies are empty, nothing is behind */
+        st_save(sec_obj(6), &proj_slot[0], 0);
+        scene_forget(6);
+        check("UNDELETE with both copies empty: nothing to restore (0), G stays empty", scene_undelete(6) == 0 && !sec_ok(6));
+        make_loop(14); scene_save(6);
+        {
+            uint32_t g14 = proj_view(6)->sum;
+            st_save(sec_obj(6), &proj_slot[0], 0); scene_forget(6);           /* erased once: its project is behind */
+            fail_after = 0;                                                   /* ... but the flash cannot be written now */
+            check("UNDELETE while the flash fails: an error (-1), the scene waits in RAM, it plays from there",
+                  scene_undelete(6) == -1 && sec_ok(6) && stage_slot == 6 && proj_view(6) == &proj_stage &&
+                  proj_view(6)->sum == g14);
+            fail_after = -1;
+            check("... written when the flash works again (the main loop's flush)", fsec_flush() == 0 && stage_slot < 0 &&
+                  sec_ok(6) && proj_view(6) == fsec_ptr[2] && proj_view(6)->sum == g14);
+            st_save(sec_obj(6), &proj_slot[0], 0); st_save(sec_obj(6), &proj_slot[0], 0);   /* erased twice: empty for the rest */
+            scene_forget(6);
+        }
+    }
     boot();
     check("... also after a restart (an object of no bytes is no scene)", !sec_ok(6) && sec_ok(4) && sec_ok(5) && sec_ok(7));
     check("... and a new G can be saved over it", (make_loop(8), scene_save(6) == 0) && sec_ok(6));

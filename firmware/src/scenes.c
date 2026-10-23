@@ -71,6 +71,44 @@ static int scene_save(uint32_t slot)
 #endif
     return 1;
 }
+/* UNDELETE (SLOOP 2.8.1+8S.1): a scene E..H that is empty because it was erased keeps its last project in the object's
+ * older copy until the next save writes over it (an erase only writes a newer, empty copy). Found here, copied to
+ * proj_stage and written back as the newest copy. 1: restored; 0: nothing to restore (not empty, no older copy that
+ * checks); -1: the flash could not be written (another scene still waits, or an error: nothing was lost yet unless the
+ * power fails during the write, a few tenths of a second) */
+static int scene_undelete(uint32_t s)
+{
+#if FELUCCA_FLASH
+    uint32_t obj, c, best = 2u, bseq = 0;
+    st_hdr_t h[2];
+    if (s < NSEC_RAM || s >= NSEC || !flash_ok || sec_ok(s))
+        return 0;
+    if (stage_slot >= 0 && fsec_flush())
+        return -1;                                      /* (another one still waits, and cannot be written) */
+    obj = sec_obj(s);
+    for (c = 0; c < 2u; c++) {
+        const project_t *p;
+        if (st_head(obj, c, &h[c]) || h[c].len != sizeof(project_t))
+            continue;
+        p = (const project_t *)st_map(st_sector(obj, c) + ST_PAYLOAD_OFF);
+        if (!proj_ok(p) || st_crc32(p, h[c].len) != h[c].crc)
+            continue;
+        if (best > 1u || h[c].seq > bseq) {
+            best = c;
+            bseq = h[c].seq;
+        }
+    }
+    if (best > 1u)
+        return 0;
+    memcpy(&proj_stage, st_map(st_sector(obj, best) + ST_PAYLOAD_OFF), sizeof proj_stage);   /* (its sector is erased next) */
+    stage_slot = (int8_t)s;
+    sec_dirty |= (uint8_t)(1u << s);
+    return fsec_flush() ? -1 : 1;
+#else
+    (void)s;
+    return 0;
+#endif
+}
 /* erased: nothing of it stays, staged or in flash (the object itself was emptied by the caller) */
 static void scene_forget(uint32_t slot)
 {
