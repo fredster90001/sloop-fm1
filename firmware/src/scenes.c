@@ -118,6 +118,37 @@ static void scene_forget(uint32_t slot)
     fsec_used &= (uint8_t)~(1u << (slot - NSEC_RAM));
 }
 
+/* a backup's scene E..H (editor.c, backup objects 12..15), stopped: the project checked (older formats converted: the
+ * same proj_import as A..D), then written as its newest copy. n 0: the scene erased. 0: done; 2: not a project;
+ * 3: the song plays; 4: the flash cannot be written (the scene stays as it was, or waits in RAM when only the write failed) */
+static uint32_t scene_restore(uint32_t slot, const void *raw, uint32_t n)
+{
+#if FELUCCA_FLASH
+    if (slot < NSEC_RAM || slot >= NSEC)
+        return 2;
+    if (song.playing || transport_req)
+        return 3;
+    if (!flash_ok)
+        return 4;
+    if (stage_slot >= 0 && fsec_flush())
+        return 4;                                       /* (another one still waits, and cannot be written) */
+    if (!n) {
+        if (st_save(sec_obj(slot), &proj_stage, 0))     /* (an object of no bytes: the source is not read) */
+            return 4;
+        scene_forget(slot);
+        sec_dirty &= (uint8_t)~(1u << slot);
+        return 0;
+    }
+    if (!proj_import(&proj_stage, raw, (int)n))
+        return 2;
+    stage_slot = (int8_t)slot;
+    sec_dirty |= (uint8_t)(1u << slot);
+    return fsec_flush() ? 4u : 0u;
+#else
+    (void)slot; (void)raw; (void)n;
+    return 4;
+#endif
+}
 #if FELUCCA_ARRANGER
 /* SAVE + key (ui_layers.c), also while playing: stored into RAM at once. A..D as ever; E..H wait in proj_stage (one of
  * them at a time) for the flash. 1: stored. 0: not: another of E..H still waits and the flash cannot be written now

@@ -428,6 +428,12 @@ UI_SMALL static const uint8_t *ed_bk_obj(uint32_t id, uint32_t *len)   /* 0 = no
             *len = sizeof proj_slot[0];
         return (const uint8_t *)&proj_slot[id - 2u];
     }
+    if (id >= 12u && id <= 15u) {                         /* SLOOP 8S.2: a scene E..H, read where it is (flash, or waiting in RAM) */
+        const project_t *q = proj_view(id - 12u + NSEC_RAM);
+        if (q && sec_ok(id - 12u + NSEC_RAM))
+            *len = sizeof *q;
+        return q ? (const uint8_t *)q : (const uint8_t *)&proj_slot[0];
+    }
     if (id == 6u || id == 7u) {                           /* a user preset bank, read where it is (upreset.c) */
         const up_bank_t *bk = up_bank_xip[id - 6u];
         if (bk)
@@ -466,8 +472,9 @@ UI_SMALL static const uint8_t *ed_bk_obj(uint32_t id, uint32_t *len)   /* 0 = no
     }
     return 0;
 }
-static const uint8_t ED_BK_IDS[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 32, 33, 34};   /* 11: your theme (2.7); (35: USR4, 2.4, gone in 8S),
-                                                                                  * 9: SYN kits (2.5), 10: MIDI LEARN (2.6) */
+static const uint8_t ED_BK_IDS[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34};   /* 12..15: the scenes
+                                                       * E..H (8S.2, kept in flash: listed only when there is one); 11: your theme
+                                                       * (2.7); (35: USR4, 2.4, gone in 8S); 9: SYN kits (2.5), 10: MIDI LEARN (2.6) */
 
 /* a flash erase silences the audio for ~50 ms and stalls USB: only while stopped (as the panel) */
 UI_SMALL static uint32_t ed_flash_busy(void) { return song.playing || transport_req; }
@@ -482,6 +489,8 @@ UI_SMALL static uint32_t ed_bk_commit(void)
         return settings_restore(raw, n);
     if (id <= 5u)
         return project_restore(id == 0u ? 4u : id - 2u, raw, n);
+    if (id >= 12u && id <= 15u)                           /* SLOOP 8S.2: a scene E..H (n 0: erased) */
+        return scene_restore(id - 12u + NSEC_RAM, raw, n);
     if (id == 6u || id == 7u) {                           /* a user preset bank (n 0: empty) */
         const up_bank_t *b = (const up_bank_t *)raw;
         if (ed_flash_busy())
@@ -579,12 +588,20 @@ UI_SMALL static int ed_backup(uint32_t cmd, const uint8_t *a, uint32_t na)   /* 
             ed_bk_put = 0;
         }
         ed_b(rc);
-        ed_b(rc ? 0u : (uint32_t)sizeof ED_BK_IDS - (ed_bk_obj(10u, &len) && !len ? 1u : 0u) -
-                           (ed_bk_obj(11u, &len) && !len ? 1u : 0u));
+        {
+            uint32_t cnt = 0;
+            for (i = 0; !rc && i < sizeof ED_BK_IDS; i++) {
+                ed_bk_obj(ED_BK_IDS[i], &len);
+                if (!((ED_BK_IDS[i] == 10u || ED_BK_IDS[i] == 11u || (ED_BK_IDS[i] >= 12u && ED_BK_IDS[i] <= 15u)) && !len))
+                    cnt++;
+            }
+            ed_b(rc ? 0u : cnt);
+        }
         for (i = 0; !rc && i < sizeof ED_BK_IDS; i++) {
             p = ed_bk_obj(ED_BK_IDS[i], &len);
-            if ((ED_BK_IDS[i] == 10u || ED_BK_IDS[i] == 11u) && !len)
-                continue;                                 /* (nothing learned / no theme: not in the list) */
+            if ((ED_BK_IDS[i] == 10u || ED_BK_IDS[i] == 11u || (ED_BK_IDS[i] >= 12u && ED_BK_IDS[i] <= 15u)) && !len)
+                continue;                                 /* (nothing learned / no theme / an empty scene E..H: not in the list;
+                                                           * a restore never erases a scene that the backup does not hold) */
             ed_b(ED_BK_IDS[i]);
             ed_bk_u32(len);
             ed_bk_u32(st_crc32(p, len));
@@ -611,7 +628,7 @@ UI_SMALL static int ed_backup(uint32_t cmd, const uint8_t *a, uint32_t na)   /* 
         rc = 1;
         if (!flash_ok) {
             rc = 4;
-        } else if (op == 0u && na == 12u && (id <= 11u)) {  /* begin: id, length (5), CRC-32 (5) */
+        } else if (op == 0u && na == 12u && (id <= 15u)) {  /* begin: id, length (5), CRC-32 (5) */
             len = ed_bk_r32(a + 2);
             if (id >= 2u || len) {                        /* (the working project and the settings are never empty) */
                 if (len <= sizeof proj_tmp) {

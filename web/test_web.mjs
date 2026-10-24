@@ -599,6 +599,49 @@ async function editorV9() {
   old.done();
 }
 
+/* ------------------------------------- SLOOP 8S.2: the scenes E..H in a backup --- */
+async function editorEightScenes() {
+  const C = E.CMD;
+  const mk = async (opt) => { const m = attachMock(opt); m.info = E.parse[C.INFO](await m.rq(E.req.info())); return m; };
+  const ids = async (m) => E.parse[C.BK_LIST](await m.rq(E.req.bkList())).items;
+  const save = async (m, slot, v) => {                        /* a scene = the working project at that moment */
+    await m.rq(E.req.set(0, 3, v));
+    return E.parse[C.PROJECT](await m.rq(E.req.project(1, slot), { timeout: 4000, retries: 0 }));
+  };
+  const a = await mk({ eight: true });
+  const none = (await ids(a)).filter((x) => x.id >= 12 && x.id <= 15).length;
+  await save(a, 4, 11); await save(a, 6, 22); await save(a, 1, 33);
+  const li = await ids(a);
+  ok(/\+8S/.test(a.info.version) && none === 0 && js(li.filter((x) => x.id >= 12 && x.id <= 15).map((x) => x.id)) === js([12, 14])
+    && li.find((x) => x.id === 3) && E.parse[C.PROJECT](await a.rq(E.req.project(2, 6))).used === 1 && E.parse[C.PROJECT](await a.rq(E.req.project(2, 5))).used === 0,
+    "8S: a +8S device lists a backup object only for a scene E..H that exists (12, 14); sections E..H answer the PROJECT query");
+  const A = await E.backupCapture(a.rq, a.info);
+  const o12 = A.objects.find((o) => o.id === 12), o14 = A.objects.find((o) => o.id === 14);
+  ok(o12 && o14 && o12.crc !== o14.crc && E.backupObjects(JSON.parse(JSON.stringify(A))).has(14),
+    "8S: the backup file holds scenes E and G (two different projects) and reads back");
+  /* a fresh device gets all of it */
+  const b = await mk({ eight: true });
+  await E.backupRestore(b.rq, JSON.parse(JSON.stringify(A)));
+  const lb = await ids(b);
+  ok(js(lb.filter((x) => x.id >= 12 && x.id <= 15).map((x) => [x.id, x.crc])) === js([[12, o12.crc >>> 0], [14, o14.crc >>> 0]]),
+    "8S: restored into another 8-scene FM-1: E and G are there, the same bytes (CRC), F and H still empty");
+  /* an older backup (made before E..H were in it) never erases the scenes on the device */
+  const old = JSON.parse(JSON.stringify(A));
+  old.objects = old.objects.filter((o) => o.id < 12 || o.id > 15);
+  await E.backupRestore(b.rq, old);
+  ok((await ids(b)).filter((x) => x.id >= 12 && x.id <= 15).length === 2, "8S: a backup without E..H restores A..D and leaves E and G on the FM-1");
+  /* the song page: sections up to H on an 8-scene device */
+  const song = { loop: false, entries: [{ scene: 6, bars: 4 }, { scene: 1, bars: 8 }] };
+  ok(E.ARR.valid(song, 8) && !E.ARR.valid(song) && !E.ARR.valid({ loop: false, entries: [{ scene: 8, bars: 4 }] }, 8),
+    "8S: the song order may use sections A..H on an 8-scene FM-1 (A..D only otherwise)");
+  /* a device without the scenes (2.6 / stock 2.8.1): the backup restores, E and G are skipped without an error */
+  const c = await mk({});
+  let err = null;
+  try { await E.backupRestore(c.rq, JSON.parse(JSON.stringify(A))); } catch (e) { err = e; }
+  ok(!/\+8S/.test(c.info.version) && !err && !(await ids(c)).some((x) => x.id >= 12 && x.id <= 15), "8S: the same backup into a device without scenes E..H: restored, E and G skipped");
+  a.done(); b.done(); c.done();
+}
+
 /* ------------------------------------- editor v6: backup / restore --- */
 async function editorBackup() {
   const C = E.CMD;
@@ -606,8 +649,8 @@ async function editorBackup() {
   const info = E.parse[C.INFO](await rq(E.req.info()));
   ok(info.proto >= 6, "backup: INFO protocol v6 or later");
   const ec = readFileSync(join(HERE, "../firmware/src/editor.c"), "utf8");
-  ok(/ED_BK_IDS\[\] = \{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 32, 33, 34, 35\}/.test(ec) && E.backupObjects && [10, 11].every((id) => ec.includes(`id == ${id}u`)),
-    "backup: the object ids == editor.c ED_BK_IDS (35: USR4, 9: SYN kits, 10: MIDI LEARN, 11: theme)");
+  ok(/ED_BK_IDS\[\] = \{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34\}/.test(ec) && E.backupObjects && [10, 11].every((id) => ec.includes(`id == ${id}u`)),
+    "backup: the object ids == editor.c ED_BK_IDS (USR4 gone in 8S, 9: SYN kits, 10: MIDI LEARN, 11: theme, 12..15: scenes E..H)");
   await rq(E.req.upStore(3, "BACKUP ME"));
   await rq(E.req.project(1, 2), { timeout: 4000, retries: 0 });
   const s = Int16Array.from({ length: 3000 }, (_, i) => Math.round(8000 * Math.sin(i / 7)));
@@ -1788,6 +1831,7 @@ await editorV7();
 await editorV8();
 await editorV9();
 await editorBackup();
+await editorEightScenes();
 await editor25();
 await editorDsyn();
 await editorCart();

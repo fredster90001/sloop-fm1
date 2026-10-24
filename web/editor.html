@@ -1589,7 +1589,7 @@ const req = {
     return [CMD.DRUM_STEP, [i & 0x7F, ...g7(d.on & 0xFFFF, 3), ...g7(lv, 5), ...g7(rt, 5)]];
   },
   preset: (e, p) => [CMD.PRESET, [e & 0x7F, p & 0x7F]],
-  project: (op, slot) => { if (![0, 1, 2].includes(op)) throw new Error("bad PROJECT op"); return [CMD.PROJECT, [op, slot & 3]]; },   /* 0 load, 1 save, 2 query */
+  project: (op, slot) => { if (![0, 1, 2].includes(op)) throw new Error("bad PROJECT op"); return [CMD.PROJECT, [op, slot & 7]]; },   /* 0 load, 1 save, 2 query (slots 4..7 = E..H: only on a "+8S" build, the others mask the slot to 0..3) */
   names: (e) => [CMD.NAMES, [e & 0x7F]],
   smpBegin: (s) => [CMD.SMP_BEGIN, [s & 0x7F]],
   smpWrite: (s, off, bytes) => [CMD.SMP_WRITE, [s & 0x7F, off & 0x7F, (off >> 7) & 0x7F, (off >> 14) & 0x7F, ...pack7(bytes)]],
@@ -2412,10 +2412,11 @@ function b64dec(s) {
   return out.subarray(0, o);
 }
 /* object ids (firmware editor.c ED_BK_IDS): 0 the working project, 1 the settings, 2..5 projects A..D,
-   6..7 the user preset banks, 32..35 the sample slots USR1..4 (35, USR4: SLOOP 2.4) */
+   6..7 the user preset banks, 12..15 the scenes E..H (8-scene builds, "+8S": listed only when there is one; a restore
+   never erases a scene the backup does not hold), 32..35 the sample slots USR1..4 (35, USR4: SLOOP 2.4) */
 /* RESTORE: the objects in the order they are written back (banks first; 8 = the FM6 patch bank, firmware v9: a
    file without it restores fine, a v8 device gets no object 8 sent; 9 = the SYN drum kits, firmware v10, likewise) */
-const BK = { FORMAT: "sloop-backup", VERSION: 1, SAMPLES: [32, 33, 34, 35], RESTORE: [6, 7, 8, 9, 10, 11, 2, 3, 4, 5, 0, 1] };   /* 10: MIDI LEARN (2.6),
+const BK = { FORMAT: "sloop-backup", VERSION: 1, SAMPLES: [32, 33, 34, 35], RESTORE: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 2, 3, 4, 5, 0, 1] };   /* 10: MIDI LEARN (2.6),
                                                        * 11: your theme (2.7, before the settings: they say whether it is shown) */
 class BackupError extends Error { constructor(code, msg) { super(msg); this.code = code; } }
 /* read everything; progress(done, total bytes) */
@@ -2471,7 +2472,7 @@ async function backupRestore(rq, file, progress = () => {}) {
   /* (2.6) projects newer than the device reads (a 2.6 backup into 2.5): stop before anything is written (it stopped at
      the first project, the preset banks already replaced) */
   const info = parse[CMD.INFO](await rq(req.info(), { timeout: 1000, retries: 2 }));
-  const newest = Math.max(0, ...[0, 2, 3, 4, 5].filter((id) => m.has(id)).map((id) => bkProjFormat(m.get(id))));
+  const newest = Math.max(0, ...[0, 2, 3, 4, 5, 12, 13, 14, 15].filter((id) => m.has(id)).map((id) => bkProjFormat(m.get(id))));
   if (newest > bkDevFormat(info)) throw new BackupError("bkNewer", `${file.firmware || "?"} > ${info.version}`);
   /* (2.6) a backup of a 2.6 FM-1 without object 10 had the MIDI settings at their defaults (nothing learned, channels
      1 2 3, drums 10, OTHER SEL, BEND 2): restored as such, not left as the device has them now */
@@ -2486,9 +2487,10 @@ async function backupRestore(rq, file, progress = () => {}) {
     if (!m.has(id)) continue;
     const d = m.get(id);
     let r = parse[CMD.BK_PUT](await rq(req.bkBegin(id, d.length, crc32(d)), { timeout: 1500, retries: 1 }));
-    if ((r.rc === 1 || r.rc === 5) && (id === 8 || id === 9 || id === 10 || id === 11)) continue;   /* a device without the FM6 bank (v8) /
-                                                       * the SYN kits (v9) / MIDI LEARN (2.6): skipped (its BK_PUT answers
-                                                       * an unknown id's begin with 5) */
+    if ((r.rc === 1 || r.rc === 5) && (id === 8 || id === 9 || id === 10 || id === 11 || (id >= 12 && id <= 15))) continue;   /* a device
+                                                       * without the FM6 bank (v8) / the SYN kits (v9) / MIDI LEARN (2.6) / the scenes
+                                                       * E..H (a build without "+8S"): skipped (its BK_PUT answers an unknown id's begin
+                                                       * with 5, or 1) */
     if (r.rc) throw new BackupError("bkWrite", `begin ${id} rc ${r.rc}`);
     for (let off = 0; off < d.length; off += 256) {
       r = parse[CMD.BK_PUT](await rq(req.bkData(id, off, d.subarray(off, off + 256)), { timeout: 1500, retries: 1 }));
@@ -3149,7 +3151,7 @@ function makeMockDevice(opt = {}) {
   const st = {
     tracks: [0, 1, 2, 3].map(newTrack), sel: 0, rec: 0, solo: 0,
     g: GP.map((d) => d.def),
-    slots: [null, null, null, null],
+    slots: new Array(opt.eight ? 8 : 4).fill(null),
     smp: [0, 1, 2, 3].map(() => ({ flash: new Uint8Array(SMP.SLOT_SIZE).fill(0xFF), zones: 0, name: "", len: 0, next: SMP.DATA_OFF })),   /* USR1..4 (2.4: USR4) */
     bank: new Array(opt.slots || 32).fill(null),     /* user presets: {engine, name, p, pattern} */
     fm6bank: new Array(FM6_BANK).fill(null),         /* the FM6 patch bank (fm6_bank.c): packed records */
@@ -3327,7 +3329,7 @@ function makeMockDevice(opt = {}) {
         b(0);
         break;
       case CMD.INFO:
-        s(opt.legacy ? "FELUCCA 0.4 BETA (MOCK)" : opt.v3 ? "FELUCCA 0.8 (MOCK)" : "FELUCCA SLOOP 2.6 (MOCK)"); b(ENG.length); b(P_COUNT); b(G_COUNT); b(NSTEP); b(P_E0);
+        s(opt.legacy ? "FELUCCA 0.4 BETA (MOCK)" : opt.v3 ? "FELUCCA 0.8 (MOCK)" : opt.eight ? "FELUCCA SLOOP 2.8.1+8S (MOCK)" : "FELUCCA SLOOP 2.6 (MOCK)"); b(ENG.length); b(P_COUNT); b(G_COUNT); b(NSTEP); b(P_E0);
         ENG.forEach((e) => s(e.name));
         if (!opt.legacy) b(NTRK);
         if (v5) b(mockProto);   /* v12: LIVE (2.7), v11: your theme (2.7) */   /* v10: SYN kits (v9: FM6 patches, v8: fill conditions, v7: nudges and locks, v6: backup) */
@@ -3484,7 +3486,7 @@ function makeMockDevice(opt = {}) {
         break;
       case CMD.PROJECT: {
         if (a.length < 2) return null;
-        const k = a[1] & 3;
+        const k = a[1] & (opt.eight ? 7 : 3);
         if (a[0] > 2) return null;
         if (a[0] === 1) st.slots[k] = project();
         else if (a[0] === 0 && st.slots[k]) Object.assign(st, JSON.parse(JSON.stringify(st.slots[k])));
@@ -3543,6 +3545,7 @@ function makeMockDevice(opt = {}) {
         const enc = (o) => Uint8Array.from(Array.from(JSON.stringify(o), (c) => c.charCodeAt(0) & 0x7F));
         const bankOf = (h) => { const x = st.bank.slice(h * 16, h * 16 + 16); return x.some(Boolean) ? enc(x) : new Uint8Array(0); };
         st.bkSnap = new Map([[0, enc(project())], [1, st.settings.slice()], ...[0, 1, 2, 3].map((k) => [2 + k, st.slots[k] ? enc(st.slots[k]) : new Uint8Array(0)]),
+          ...(opt.eight ? [4, 5, 6, 7].filter((k) => st.slots[k]).map((k) => [8 + k, enc(st.slots[k])]) : []),   /* the scenes E..H: only when there is one */
           [6, bankOf(0)], [7, bankOf(1)], ...(v9 ? [[8, st.fm6bank.some(Boolean) ? FM6.bankObj(st.fm6bank) : new Uint8Array(0)]] : []),
           ...(v10 ? [[9, DSYN.bankEncode(dsynKits())]] : []),
           ...(v10 && st.ml && !mlDefault(st.ml) ? [[10, st.ml.slice()]] : []),   /* MIDI LEARN (2.6): only when not the
@@ -3567,7 +3570,7 @@ function makeMockDevice(opt = {}) {
         if (opt.noBackup || a.length < 2) return null;
         const op = a[0], id = a[1], r = new Reader(a.slice(2));
         let rc = 1;
-        if (op === 0 && a.length === 12 && [0, 1, 2, 3, 4, 5, 6, 7, ...(v9 ? [8] : []), ...(v10 ? [9, 10] : []), ...(v11 ? [11] : [])].includes(id)) {
+        if (op === 0 && a.length === 12 && [0, 1, 2, 3, 4, 5, 6, 7, ...(v9 ? [8] : []), ...(v10 ? [9, 10] : []), ...(v11 ? [11] : []), ...(opt.eight ? [12, 13, 14, 15] : [])].includes(id)) {
           const len = u35dec(r), crc = u35dec(r);
           if ((id >= 2 || len) && len <= 1 << 20) { st.bkPut = { id, len, crc, pos: 0, buf: new Uint8Array(len) }; st.bkSnap = null; rc = 0; }
         } else if (!st.bkPut || st.bkPut.id !== id) rc = 5;
@@ -3581,12 +3584,16 @@ function makeMockDevice(opt = {}) {
           if (!rc) try {
             const js = () => JSON.parse(Array.from(P.buf, (c) => String.fromCharCode(c)).join(""));
             if (id === 1) {                                 /* project.c settings_restore */
-              if (P.len !== st.settings.length || !ARR.ok(P.buf) || P.buf[ARR.OFF] > ARR.STEPS || P.buf[ARR.OFF + 1] > 1 || !ARR.valid(ARR.decode(P.buf))) throw 0;
+              if (P.len !== st.settings.length || !ARR.ok(P.buf) || P.buf[ARR.OFF] > ARR.STEPS || P.buf[ARR.OFF + 1] > 1 || !ARR.valid(ARR.decode(P.buf), opt.eight ? 8 : 4)) throw 0;
               if (st.playing && P.buf.subarray(ARR.OFF, ARR.OFF + ARR.SIZE).some((v, k) => v !== st.settings[ARR.OFF + k])) { rc = 3; }
               else st.settings = P.buf.slice();
             }
             else if (id === 0) { const o = js(); st.tracks = o.tracks; st.sel = o.sel; st.g = o.g; }
             else if (id <= 5) st.slots[id - 2] = P.len ? js() : null;
+            else if (id >= 12) {                            /* a scene E..H (8-scene builds; scenes.c scene_restore: stopped only) */
+              if (st.playing) rc = 3;
+              else st.slots[id - 8] = P.len ? js() : null;
+            }
             else if (id === 11) {                           /* your theme (2.7; editor.c: stopped only; 0 bytes: none) */
               const th = P.len ? THEME.decode(P.buf) : null;
               if (P.len && (!th || !THEME.readable(th))) throw 0;
@@ -4292,9 +4299,9 @@ const ARR = {
     }
     return o;
   },
-  /* arranger.h arr_valid: 1..16 entries, sections A..D, 1..64 bars */
-  valid: (song) => song.entries.length >= 1 && song.entries.length <= ARR.STEPS
-    && song.entries.every((e) => e.scene >= 0 && e.scene < 4 && e.bars >= 1 && e.bars <= ARR.MAX_BARS),
+  /* arranger.h arr_valid: 1..16 entries, sections A..D (A..H on a "+8S" build: nsc 8), 1..64 bars */
+  valid: (song, nsc = 4) => song.entries.length >= 1 && song.entries.length <= ARR.STEPS
+    && song.entries.every((e) => e.scene >= 0 && e.scene < nsc && e.bars >= 1 && e.bars <= ARR.MAX_BARS),
   /* entries -> rows {scene, bars, times}: the same section with the same bars in a row is one row played `times` */
   group(entries) {
     const rows = [];
@@ -4772,7 +4779,7 @@ const TEXT = {
     mixer: "ミキサー", mixHelp: "本体の TRACKS ページと同じ 4 トラック。フェーダーはレベル（ドラムは GLO > DRUMS LEVEL）。パンはどのトラックも選択を変えずに書き込みます（0.8 のファームウェアでは一瞬そのトラックを選びます）。REC は本体での録音待機の表示です。",
     level: "レベル", pan: "パン", mute: "ミュート", rec: "REC", selectTrack: "選択", selectedTrack: "選択中",
     projHelp: "FM-1 が持つのは 1 曲です: セクション A〜D（それぞれ 4 トラックのループ: 音色、パターン、テンポ、キー）と、その並び（ソングタブ）。「読込」はセクションを今のループに入れ、「保存」は今のループをセクションにしまいます。4 曲ではありません: 何曲も残すには、曲ごとに下のバックアップをファイルに保存し、使う曲を復元してください。",
-    bkTitle: "バックアップ", bkHelp: "FM-1 の中身をすべて 1 つのファイルに保存します: 今のループ、ソング（セクション A〜D とその並び）、ユーザープリセット、FM6 の音色バンク、サンプル USR1〜4、設定（色、キャリブレーション、ソング、ライト）。復元すると、本体はファイルの状態に戻ります（今の内容は上書きされます）。",
+    bkTitle: "バックアップ", bkHelp: "FM-1 の中身をすべて 1 つのファイルに保存します: 今のループ、ソング（セクション A〜D とその並び）、ユーザープリセット、FM6 の音色バンク、サンプル USR1〜4、設定（色、キャリブレーション、ソング、ライト）。復元すると、本体はファイルの状態に戻ります（今の内容は上書きされます）。8 シーン版（バージョン末尾が +8S）ではシーン E〜H もファイルに入ります。復元はファイルにあるシーンだけを書き込み、ファイルにないシーンを消すことはありません。",
     bkSave: "バックアップを保存", bkLoad: "ファイルから復元", bkSaving: "バックアップ中 ", bkSaved: "バックアップを保存しました",
     bkRestoring: "復元中 ", bkRestored: "復元しました", bkConfirm: "FM-1 の今の内容をすべてこのバックアップで置き換えます。続けますか？",
     bkBad: "SLOOP のバックアップファイルではないか、壊れています: ", bkStop: "FM-1 の再生を止めてから、もう一度復元してください。",
@@ -5109,7 +5116,7 @@ const TEXT = {
     mixer: "Mixer", mixHelp: "The four tracks of the device's TRACKS page. The fader is the level (drums: GLO > DRUMS LEVEL). Pan is written to any track without changing the selection (firmware 0.8: by selecting it for a moment). REC shows a track armed for live recording on the device.",
     level: "Level", pan: "Pan", mute: "Mute", rec: "REC", selectTrack: "Select", selectedTrack: "Selected",
     projHelp: "The FM-1 holds one song: four sections A–D, each a loop of the four tracks (sounds, patterns, tempo, key), and the order they play in (the Song tab). Load puts a section into the loop you are working on; Save stores that loop into a section. They are not four songs: to keep several songs, save a Backup file per song (below) and restore the one you want.",
-    bkTitle: "Backup", bkHelp: "Everything on the FM-1 in one file: the loop you are working on, the song (its sections A–D and their order), the user presets, the FM6 patch bank, the samples USR1–USR4 and the settings (colours, calibration, the song, the lights). Restoring puts the FM-1 back as it was in the file (what is on it now is replaced).",
+    bkTitle: "Backup", bkHelp: "Everything on the FM-1 in one file: the loop you are working on, the song (its sections A–D and their order), the user presets, the FM6 patch bank, the samples USR1–USR4 and the settings (colours, calibration, the song, the lights). Restoring puts the FM-1 back as it was in the file (what is on it now is replaced). On an eight-scene build (version ending +8S) the scenes E–H are in the file too: a restore writes the ones the file holds and never erases a scene it does not hold.",
     bkSave: "Save a backup", bkLoad: "Restore from a file", bkSaving: "Backing up ", bkSaved: "Backup saved",
     bkRestoring: "Restoring ", bkRestored: "Restored", bkConfirm: "Replace everything on the FM-1 with this backup?",
     bkBad: "Not a SLOOP backup, or damaged: ", bkStop: "Stop the FM-1 (PLAY), then restore again.",
@@ -5884,6 +5891,10 @@ renderPreviewKeys();
 
 /* -------------------------------------------------------------- state --- */
 let access = null;     /* MIDIAccess */
+/* the sections the FM-1 has: A..D, or A..H on an eight-scene build ("+8S" in its version) */
+const SECL = "ABCDEFGH";
+const nSecOf = (info) => (info && /\+8S/.test(info.version || "") ? 8 : 4);
+const nSec = () => nSecOf(dev && dev.info);
 let dev = null;        /* {link, input, output, info, pdesc[], gdesc[], names[][], dump, steps[], slotUsed[],
                           keys[] (paramKeys), watch (pushes on), bank ({total, slots[]} or null: no user bank)} */
 let busy = 0;          /* multi-request operations in progress: no polling */
@@ -5981,7 +5992,7 @@ async function connect() {
       }
     }
     if (!link) { sayK(pairs.length ? "noreply" : "nodevice"); return; }
-    dev = { link, input, output, info: null, pdesc: [], gdesc: [], names: [], dump: null, steps: [], slotUsed: [null, null, null, null],
+    dev = { link, input, output, info: null, pdesc: [], gdesc: [], names: [], dump: null, steps: [], slotUsed: new Array(8).fill(null),
       keys: null, watch: false, bank: null };
     sets.clear();                                    /* (another FM-1, maybe) */
     setLabel($("connect"), t("disconnect"));
@@ -6060,7 +6071,7 @@ async function load(d) {
       d.names[e] = r.names;
       d.titles[e] = r.titles;
     }
-    for (let k = 0; k < 4; k++) {                    /* PROJECT op 2: is the slot used */
+    for (let k = 0; k < nSecOf(d.info); k++) {       /* PROJECT op 2: is the slot used */
       try { d.slotUsed[k] = parse[CMD.PROJECT](await d.link.request(req.project(2, k))).used; }
       catch (e) { if (e.message === "closed") throw e; }
     }
@@ -6554,10 +6565,10 @@ function report(err) { if (err && err.message !== "closed") { console.warn(err);
 function renderSlots() {
   const box = $("slots");
   box.replaceChildren();
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < nSec(); i++) {
     const u = dev.slotUsed[i];
     box.append(el("div", { class: "slot" + (u ? " used" : "") },
-      el("b", { text: "ABCD"[i] }),
+      el("b", { text: SECL[i] }),
       el("span", { class: "st", text: u == null ? t("unknown") : t(u ? "used" : "empty") }),
       el("p", { class: "bar" },
         el("button", { class: u ? "pri" : null, ic: "symbol_folder_open", onclick: () => project(0, i) }, t("load")),
@@ -6566,7 +6577,7 @@ function renderSlots() {
 }
 async function project(op, slot) {
   if (!dev) return;
-  if (!confirm(t(op ? "confirmSave" : "confirmLoad").replace("{n}", "ABCD"[slot]))) return;
+  if (!confirm(t(op ? "confirmSave" : "confirmLoad").replace("{n}", SECL[slot]))) return;
   busy++;
   try {
     /* save writes flash: a long timeout and no retry */
@@ -6576,7 +6587,7 @@ async function project(op, slot) {
     dev.slotUsed[slot] = r.used;
     renderSlots();
     if (!op && r.used) await afterSoundChange();
-    sayK(op ? "secSaved" : r.used ? "secLoaded" : "secEmpty", "ABCD"[slot]);
+    sayK(op ? "secSaved" : r.used ? "secLoaded" : "secEmpty", SECL[slot]);
   } catch (err) { report(err); } finally { busy--; }
 }
 
@@ -7383,7 +7394,7 @@ async function readSong() {
 async function sendSong() {
   if (!dev || !SG.rows) return;
   const song = { loop: SG.loop, entries: ARR.expand(SG.rows) };
-  if (!ARR.valid(song)) { sayK("songBad"); return; }
+  if (!ARR.valid(song, nSec())) { sayK("songBad"); return; }
   const d = ARR.encode(SG.bytes, song);
   let r = parse[CMD.BK_PUT](await rq(req.bkBegin(1, d.length, crc32(d)), { timeout: 1500, retries: 1 }));
   if (r.rc) throw new Error(`song: begin rc ${r.rc}`);
@@ -7406,10 +7417,10 @@ function renderSong() {
   if (SG.err) $("songerr").textContent = t(SG.err);
   $("songbody").hidden = !SG.rows;
   if (!SG.rows) return;
-  const LET = "ABCD", n = songCount(), bars = (SG.rows || []).reduce((a, r) => a + r.bars * Math.max(1, r.times | 0), 0);
+  const LET = SECL, n = songCount(), bars = (SG.rows || []).reduce((a, r) => a + r.bars * Math.max(1, r.times | 0), 0);
   box.replaceChildren(...SG.rows.map((r, k) => {
     const sec = el("select", { onchange: (e) => songEdit(() => { r.scene = +e.target.value; }) },
-      ...[0, 1, 2, 3].map((s) => el("option", { value: s, text: LET[s] + (dev.slotUsed[s] === false ? ` (${t("empty")})` : "") })));
+      ...Array.from({ length: nSec() }, (_, s) => s).map((s) => el("option", { value: s, text: LET[s] + (dev.slotUsed[s] === false ? ` (${t("empty")})` : "") })));
     sec.value = String(r.scene);
     const num = (v, max, set) => el("input", { type: "number", min: 1, max, value: String(v), onchange: (e) =>
       songEdit(() => set(Math.max(1, Math.min(max, Math.round(+e.target.value) || 1)))) });
@@ -7433,7 +7444,7 @@ function renderSong() {
 }
 $("songadd").addEventListener("click", () => songEdit(() => {
   const last = SG.rows[SG.rows.length - 1];
-  SG.rows.push({ scene: last ? (last.scene + 1) % 4 : 0, bars: last ? last.bars : 4, times: 1 });
+  SG.rows.push({ scene: last ? (last.scene + 1) % nSec() : 0, bars: last ? last.bars : 4, times: 1 });
 }));
 $("songread").addEventListener("click", () => op(readSong));
 $("songsend").addEventListener("click", () => op(sendSong));
@@ -9772,8 +9783,8 @@ async function songExport() {
 async function songLoadUI(file, progress) {
   selfLoad();
   await songLoad(rq, file, progress);
-  dev.slotUsed = [null, null, null, null];
-  for (let k = 0; k < 4; k++) {
+  dev.slotUsed = new Array(8).fill(null);
+  for (let k = 0; k < nSec(); k++) {
     try { dev.slotUsed[k] = parse[CMD.PROJECT](await rq(req.project(2, k))).used; } catch (e) { if (e.message === "closed") throw e; }
   }
   SG.dev = null;                                    /* (the Song tab reads the order again) */
@@ -9809,7 +9820,7 @@ $("bk-file").addEventListener("change", async () => {
     try {
       selfLoad();
       await backupRestore(rq, file, bkProgress("bkRestoring"));
-      dev.slotUsed = [null, null, null, null];
+      dev.slotUsed = new Array(8).fill(null);
       renderSlots();
       try { await smpInfo(); renderSamples(); } catch (e) { /* shown by the next action */ }
       await afterSoundChange("bkRestored");

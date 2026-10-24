@@ -206,6 +206,40 @@ int main(void)
     song.playing = 0;
     check("... the main loop has nothing to write for it", fsec_flush() == 0 && !sec_ok(7));
 
+    /* --- backups (editor.c objects 12..15): a scene read out, and written back with scene_restore */
+    {
+        static project_t raw;
+        uint32_t h_sum, e_sum2;
+        boot();
+        make_loop(20); scene_save(7); h_sum = proj_view(7)->sum;
+        make_loop(21); scene_save(4); e_sum2 = proj_view(4)->sum;
+        memcpy(&raw, proj_view(7), sizeof raw);                 /* what BK_GET would hand out for H */
+        check("backup: H read where it is (a project that checks)", proj_ok(&raw) && raw.sum == h_sum);
+        scene_save(7);                                           /* H overwritten by the working loop (a different loop) */
+        make_loop(22); scene_save(7);
+        check("... H is another loop now", proj_view(7)->sum != h_sum);
+        check("restore H from the backup: 0, the same loop it was", scene_restore(7, &raw, sizeof raw) == 0 &&
+              sec_ok(7) && proj_view(7)->sum == h_sum && stage_slot < 0);
+        check("... E untouched", proj_view(4)->sum == e_sum2);
+        boot();
+        check("... and after a restart", sec_ok(7) && proj_view(7)->sum == h_sum && proj_view(4)->sum == e_sum2);
+        check("restore of garbage: 2, nothing changes", ({ static uint8_t junk[sizeof(project_t)]; memset(junk, 0x5A, sizeof junk);
+              scene_restore(7, junk, sizeof junk); }) == 2 && proj_view(7)->sum == h_sum);
+        check("restore of a scene A..D here: not this function (2)", scene_restore(1, &raw, sizeof raw) == 2);
+        song.playing = 1;
+        check("restore while the song plays: 3, nothing changes", scene_restore(7, &raw, sizeof raw) == 3 && proj_view(7)->sum == h_sum);
+        song.playing = 0;
+        fail_after = 0;
+        check("restore with the flash failing: 4", scene_restore(6, &raw, sizeof raw) == 4);
+        fail_after = -1;
+        fsec_flush();
+        check("... it waited in RAM and is written now (G is that project)", sec_ok(6) && proj_view(6)->sum == h_sum);
+        check("restore of no bytes: the scene is erased (0)", scene_restore(6, &raw, 0) == 0 && !sec_ok(6) && sec_ok(7));
+        boot();
+        check("... also after a restart", !sec_ok(6) && sec_ok(7) && sec_ok(4));
+        make_loop(8); scene_save(6);                             /* G is there again for the checks that follow */
+    }
+
     /* --- a copy that does not check (bit rot in the newest copy) goes to the older one, as storage.c does */
     boot();
     {
